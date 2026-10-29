@@ -12,10 +12,12 @@ class Settings(BaseSettings):
 
     app_name: str = "AI-Merge-Assistant"
     environment: str = "development"
-    database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/ai_merge"
+    database_url: str = "sqlite:///./ai_merge_i0.db"
     redis_url: str = "redis://localhost:6379/0"
 
-    # Ключ шифрования пользовательских токенов хранится отдельно от БД (раздел 6 team-guide.md)
+    # Явный флаг демо/оффлайн режима (по умолчанию ВЫКЛЮЧЕН)
+    offline_demo_mode: bool = False
+
     token_encryption_key: str = "dev-only-32-byte-secret-key-0000"
     session_secret_key: str = "dev-only-session-secret-key-0000"
     github_webhook_secret: str = "dev-only-webhook-secret"

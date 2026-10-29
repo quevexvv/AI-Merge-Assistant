@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import (
-     BigInteger,
+    BigInteger,
     Boolean,
     Column,
     DateTime,
@@ -22,7 +22,7 @@ from app.db.base import Base
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class User(Base):
@@ -44,7 +44,9 @@ class Session(Base):
     __tablename__ = "sessions"
 
     id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     session_token_hash = Column(String(256), nullable=False, unique=True, index=True)
     csrf_token = Column(String(256), nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
@@ -56,7 +58,9 @@ class GitHubConnection(Base):
     __tablename__ = "github_connections"
 
     id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     connection_type = Column(String(32), nullable=False, index=True)
     encrypted_token = Column(String(1024), nullable=True)
     github_app_installation_id = Column(String(255), nullable=True)
@@ -99,18 +103,32 @@ class Run(Base):
     )
 
     id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
 
     source_type = Column(String(32), nullable=False)
-    repo_id = Column(Uuid(as_uuid=True), ForeignKey("repositories.id", ondelete="SET NULL"), nullable=True, index=True)
+    repo_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("repositories.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     source_sha = Column(String(40), nullable=False, index=True)
     target_sha = Column(String(40), nullable=False, index=True)
 
     execution_state = Column(
         Enum(
-            "queued", "preparing", "generating", "validating",
-            "running", "checking_coverage", "improving",
-            "completed", "failed", "cancelled",
+            "queued",
+            "preparing",
+            "generating",
+            "validating",
+            "running",
+            "checking_coverage",
+            "improving",
+            "completed",
+            "failed",
+            "cancelled",
             name="run_execution_state",
         ),
         nullable=False,
@@ -153,7 +171,9 @@ class Attempt(Base):
     __tablename__ = "attempts"
 
     id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    run_id = Column(Uuid(as_uuid=True), ForeignKey("runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    run_id = Column(
+        Uuid(as_uuid=True), ForeignKey("runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     snapshot_id = Column(Uuid(as_uuid=True), nullable=False, unique=True, index=True)
     source_sha = Column(String(40), nullable=False)
     target_sha = Column(String(40), nullable=False)
@@ -177,8 +197,15 @@ class Scenario(Base):
     __tablename__ = "scenarios"
 
     id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    attempt_id = Column(Uuid(as_uuid=True), ForeignKey("attempts.id", ondelete="CASCADE"), nullable=False, index=True)
-    run_id = Column(Uuid(as_uuid=True), ForeignKey("runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    attempt_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("attempts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    run_id = Column(
+        Uuid(as_uuid=True), ForeignKey("runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     scenario_id = Column(Uuid(as_uuid=True), nullable=False, index=True)
     source_refs = Column(String(1024), nullable=False)
     requirement_tag = Column(String(32), nullable=False)
@@ -192,9 +219,18 @@ class Artifact(Base):
     __tablename__ = "artifacts"
 
     id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    run_id = Column(Uuid(as_uuid=True), ForeignKey("runs.id", ondelete="SET NULL"), nullable=True, index=True)
-    attempt_id = Column(Uuid(as_uuid=True), ForeignKey("attempts.id", ondelete="SET NULL"), nullable=True, index=True)
+    user_id = Column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    run_id = Column(
+        Uuid(as_uuid=True), ForeignKey("runs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    attempt_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("attempts.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     volume_path = Column(String(1024), nullable=False, unique=True, index=True)
     relative_path = Column(String(1024), nullable=False)
@@ -202,7 +238,9 @@ class Artifact(Base):
     content_hash = Column(String(128), nullable=False, index=True)
     artifact_type = Column(String(64), nullable=False, index=True)
 
-    owner_user_id = Column(Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    owner_user_id = Column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     retention_until = Column(DateTime(timezone=True), nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
 
@@ -218,7 +256,9 @@ class CoverageReport(Base):
         unique=True,
         index=True,
     )
-    run_id = Column(Uuid(as_uuid=True), ForeignKey("runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    run_id = Column(
+        Uuid(as_uuid=True), ForeignKey("runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
 
     covered_changed_lines = Column(Integer, nullable=False, default=0)
     executable_changed_lines = Column(Integer, nullable=False, default=0)
@@ -243,8 +283,12 @@ class GitHubAction(Base):
     __tablename__ = "github_actions"
 
     id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    run_id = Column(Uuid(as_uuid=True), ForeignKey("runs.id", ondelete="SET NULL"), nullable=True, index=True)
+    user_id = Column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    run_id = Column(
+        Uuid(as_uuid=True), ForeignKey("runs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     operation_type = Column(String(64), nullable=False)
     repo_owner = Column(String(255), nullable=True)
@@ -258,7 +302,9 @@ class GitHubAction(Base):
     status = Column(String(32), nullable=False, index=True)
     safe_reason = Column(String(2000), nullable=True)
     reconciliation_id = Column(Uuid(as_uuid=True), nullable=False, unique=True, index=True)
-    initiator_user_id = Column(Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    initiator_user_id = Column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow)

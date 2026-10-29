@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Literal
 from uuid import UUID
 
@@ -13,6 +13,7 @@ SCHEMA_VERSION: Literal["T1"] = "T1"
 
 class SchemaVersionMixin(BaseModel):
     """Mixin to enforce schema_version = T1 on all DTOs."""
+
     schema_version: Literal["T1"] = Field(default=SCHEMA_VERSION, frozen=True)
 
     @field_validator("schema_version", mode="before")
@@ -23,12 +24,12 @@ class SchemaVersionMixin(BaseModel):
         return v
 
 
-class SourceType(str, Enum):
+class SourceType(StrEnum):
     GITHUB = "github"
     UPLOAD = "upload"
 
 
-class ExecutionState(str, Enum):
+class ExecutionState(StrEnum):
     QUEUED = "queued"
     PREPARING = "preparing"
     GENERATING = "generating"
@@ -41,18 +42,18 @@ class ExecutionState(str, Enum):
     CANCELLED = "cancelled"
 
 
-class Verdict(str, Enum):
+class Verdict(StrEnum):
     PASSED = "passed"
     FAILED = "failed"
     NOT_APPLICABLE = "not_applicable"
 
 
-class Freshness(str, Enum):
+class Freshness(StrEnum):
     CURRENT = "current"
     STALE = "stale"
 
 
-class MergeStatus(str, Enum):
+class MergeStatus(StrEnum):
     PENDING = "pending"
     ALLOWED = "allowed"
     DENIED = "denied"
@@ -60,19 +61,19 @@ class MergeStatus(str, Enum):
     CONFLICT = "conflict"
 
 
-class Mode(str, Enum):
+class Mode(StrEnum):
     DEFAULT = "default"
     LAZY = "lazy"
     MANUAL = "manual"
     AUTO = "auto"
 
 
-class RunnerMode(str, Enum):
+class RunnerMode(StrEnum):
     COLLECT = "collect"
     TEST = "test"
 
 
-class RunnerStatus(str, Enum):
+class RunnerStatus(StrEnum):
     SUCCESS = "success"
     FAILED = "failed"
     TIMEOUT = "timeout"
@@ -80,7 +81,7 @@ class RunnerStatus(str, Enum):
     UNKNOWN = "unknown"
 
 
-class GitHubOperationType(str, Enum):
+class GitHubOperationType(StrEnum):
     READ_DIFF = "read_diff"
     PUSH_TESTS = "push_tests"
     CREATE_PR = "create_pr"
@@ -89,19 +90,19 @@ class GitHubOperationType(str, Enum):
     VERIFY_WEBHOOK = "verify_webhook"
 
 
-class GitHubOperationStatus(str, Enum):
+class GitHubOperationStatus(StrEnum):
     SUCCESS = "success"
     CONFLICT = "conflict"
     FORBIDDEN = "forbidden"
     UNKNOWN = "unknown"
 
 
-class RequirementTag(str, Enum):
+class RequirementTag(StrEnum):
     REQUIREMENTS = "requirements"
     INFERRED = "inferred"
 
 
-class ErrorCategory(str, Enum):
+class ErrorCategory(StrEnum):
     MODEL = "model"
     ENVIRONMENT = "environment"
     TESTS = "tests"
@@ -136,8 +137,14 @@ class SourceSnapshot(SchemaVersionMixin):
     @classmethod
     def _validate_diff_present(cls, v: str | None, info) -> str | None:
         other_field = "diff_artifact_path" if info.field_name == "diff_text" else "diff_text"
-        if info.data.get("source_type") == SourceType.GITHUB and not v and not info.data.get(other_field):
-            raise ValueError("At least one of diff_text or diff_artifact_path must be provided for github")
+        if (
+            info.data.get("source_type") == SourceType.GITHUB
+            and not v
+            and not info.data.get(other_field)
+        ):
+            raise ValueError(
+                "At least one of diff_text or diff_artifact_path must be provided for github"
+            )
         return v
 
 
@@ -336,6 +343,7 @@ class GitHubOperationResult(SchemaVersionMixin):
 
 class CoverageReportDTO(SchemaVersionMixin):
     """Normalized coverage report produced by CoverageCalculator."""
+
     attempt_id: UUID
     run_id: UUID
     covered_changed_lines: int = Field(ge=0)
@@ -351,6 +359,7 @@ class CoverageReportDTO(SchemaVersionMixin):
 
 class MergeGateInput(SchemaVersionMixin):
     """Input for MergeGate decision."""
+
     run_id: UUID
     attempt_id: UUID
     execution_state: ExecutionState
@@ -371,6 +380,7 @@ class MergeGateInput(SchemaVersionMixin):
 
 class MergeGateOutput(SchemaVersionMixin):
     """Output from MergeGate."""
+
     merge_decision: MergeDecision
     allowed: bool
     denial_reasons: list[str]
@@ -378,6 +388,7 @@ class MergeGateOutput(SchemaVersionMixin):
 
 class GitHubActionRecord(SchemaVersionMixin):
     """Record of a GitHub write operation for idempotency."""
+
     id: UUID
     user_id: UUID
     run_id: UUID | None = None
@@ -408,6 +419,7 @@ class WebhookDeliveryRecord(SchemaVersionMixin):
 
 class OrchestratorTransition(SchemaVersionMixin):
     """Valid state transition for RunOrchestrator."""
+
     from_state: ExecutionState
     to_state: ExecutionState
     trigger: str
@@ -416,15 +428,36 @@ class OrchestratorTransition(SchemaVersionMixin):
 # Valid transitions for RunOrchestrator (T1 states from team-guide.md)
 VALID_TRANSITIONS: dict[ExecutionState, set[ExecutionState]] = {
     ExecutionState.QUEUED: {ExecutionState.PREPARING, ExecutionState.CANCELLED},
-    ExecutionState.PREPARING: {ExecutionState.GENERATING, ExecutionState.FAILED, ExecutionState.CANCELLED},
-    ExecutionState.GENERATING: {ExecutionState.VALIDATING, ExecutionState.FAILED, ExecutionState.CANCELLED},
-    ExecutionState.VALIDATING: {ExecutionState.RUNNING, ExecutionState.FAILED, ExecutionState.CANCELLED},
-    ExecutionState.RUNNING: {ExecutionState.CHECKING_COVERAGE, ExecutionState.FAILED, ExecutionState.CANCELLED},
-    ExecutionState.CHECKING_COVERAGE: {ExecutionState.IMPROVING, ExecutionState.COMPLETED, ExecutionState.FAILED, ExecutionState.CANCELLED},
+    ExecutionState.PREPARING: {
+        ExecutionState.GENERATING,
+        ExecutionState.FAILED,
+        ExecutionState.CANCELLED,
+    },
+    ExecutionState.GENERATING: {
+        ExecutionState.VALIDATING,
+        ExecutionState.FAILED,
+        ExecutionState.CANCELLED,
+    },
+    ExecutionState.VALIDATING: {
+        ExecutionState.RUNNING,
+        ExecutionState.FAILED,
+        ExecutionState.CANCELLED,
+    },
+    ExecutionState.RUNNING: {
+        ExecutionState.CHECKING_COVERAGE,
+        ExecutionState.FAILED,
+        ExecutionState.CANCELLED,
+    },
+    ExecutionState.CHECKING_COVERAGE: {
+        ExecutionState.IMPROVING,
+        ExecutionState.COMPLETED,
+        ExecutionState.FAILED,
+        ExecutionState.CANCELLED,
+    },
     ExecutionState.IMPROVING: {ExecutionState.VALIDATING, ExecutionState.RUNNING},
     ExecutionState.COMPLETED: set(),  # Terminal
-    ExecutionState.FAILED: set(),    # Terminal
-    ExecutionState.CANCELLED: set(), # Terminal
+    ExecutionState.FAILED: set(),  # Terminal
+    ExecutionState.CANCELLED: set(),  # Terminal
 }
 
 

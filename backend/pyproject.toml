@@ -1,4 +1,49 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-merge-assistant-backend"
+version = "0.1.0"
+description = "AI-Merge-Assistant Backend (I0 core, DB models, API contracts)"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.5.0",
+    "sqlalchemy>=2.0.35",
+    "alembic>=1.13.0",
+    "psycopg[binary]>=3.2.0",
+    "celery>=5.4.0",
+    "redis>=5.0.0",
+    "httpx>=0.27.0",
+    "httpx2>=2.16.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "anyio>=4.6.0",
+    "ruff>=0.6.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "RUF", "B", "UP", "SIM", "C4"]
+ignore = ["B008", "RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.per-file-ignores]
+"app/api/router.py" = ["B008"]
+"app/main.py" = ["B008"]

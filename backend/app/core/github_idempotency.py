@@ -1,19 +1,12 @@
 """
 GitHubIdempotencyManager — управление идемпотентными операциями с GitHub.
-
-Правила (team-guide.md, разделы 4, 5, правило 10):
-- Операции: push_tests (ai-tests/<run-id>), create_pr, merge_pr (с expected head SHA)
-- Запись в исходную ветку и force-push ЗАПРЕЩЕНЫ
-- Запись намерения (GitHubAction) ДО внешнего вызова
-- Защита от дублей: при unknown статусе — сверка состояния в GitHub, НЕ немедленный повтор
-- Stale снимок (изменился source_sha или target_sha) -> конфликт (409/conflict)
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from app.schemas import (
@@ -39,6 +32,7 @@ class GitHubIdempotencyError(Exception):
 @dataclass(frozen=True, slots=True)
 class IdempotencyCheckResult:
     """Результат проверки идемпотентности перед выполнением операции."""
+
     can_proceed: bool
     reason: str | None = None
     existing_action: GitHubActionRecord | None = None
@@ -48,7 +42,8 @@ class IdempotencyCheckResult:
 
 @dataclass(frozen=True, slots=True)
 class OperationContext:
-    """Контекст для выполнения GitHub операции."""
+    """Полный контекст для выполнения и последующей сверки (reconciliation) GitHub операции."""
+
     operation_type: GitHubOperationType
     owner_user_id: UUID
     owner_github_login: str
@@ -59,20 +54,16 @@ class OperationContext:
     branch_name: str
     expected_source_sha: str
     expected_target_sha: str
-    expected_head_sha: str | None = None  # для merge_pr
+    expected_head_sha: str | None = None
     pr_number: int | None = None
+    target_branch: str = "main"
     idempotency_key: str | None = None
 
 
 class GitHubIdempotencyManager:
     """
     Менеджер идемпотентности для GitHub write-операций.
-
-    Обеспечивает:
-    1. Запись намерения (GitHubAction) до внешнего вызова
-    2. Проверку дублей и unknown-статусов (правило 10)
-    3. Сверку фактического состояния в GitHub при unknown
-    4. Блокировку при stale снимке (source_sha/target_sha изменились)
+    Сохраняет полный контекст операции (ветки, source/target/head SHA) для точной сверки.
     """
 
     def __init__(
@@ -80,49 +71,26 @@ class GitHubIdempotencyManager:
         action_repository: GitHubActionRepository,
         github_client: GitHubClient,
     ):
-        """
-        Args:
-            action_repository: Репозиторий для хранения GitHubActionRecord
-            github_client: Клиент для сверки состояния в GitHub (read-only операции)
-        """
         self._actions = action_repository
         self._github = github_client
-
-    # ==================== PUBLIC API ====================
+        self._contexts_by_reconciliation: dict[UUID, OperationContext] = {}
 
     async def prepare_operation(
         self,
         context: OperationContext,
     ) -> IdempotencyCheckResult:
-        """
-        Подготовка операции: проверка идемпотентности, запись намерения.
-
-        Вызывается ПЕРЕД любым внешним вызовом к GitHub API.
-
-        Args:
-            context: Контекст операции с ожидаемыми SHA и метаданными
-
-        Returns:
-            IdempotencyCheckResult: можно ли выполнять операцию
-
-        Raises:
-            GitHubIdempotencyError: при конфликте (stale) или ошибке прав
-        """
-        # 1. Генерируем/используем ключ идемпотентности
         idempotency_key = context.idempotency_key or self._generate_idempotency_key(context)
 
-        # 2. Ищем существующее действие с таким ключом
         existing = await self._actions.find_by_idempotency_key(idempotency_key)
-
         if existing:
+            self._contexts_by_reconciliation.setdefault(existing.reconciliation_id, context)
             return await self._handle_existing_action(existing, context)
 
-        # 3. Проверяем актуальность снимка (stale check)
         stale_check = await self._check_snapshot_freshness(context)
         if not stale_check.can_proceed:
             return stale_check
 
-        # 4. Создаём запись намерения (pending)
+        reconciliation_id = uuid4()
         action = GitHubActionRecord(
             id=uuid4(),
             user_id=context.owner_user_id,
@@ -134,26 +102,18 @@ class GitHubIdempotencyManager:
             pr_number=context.pr_number,
             expected_sha=context.expected_head_sha or context.expected_source_sha,
             actual_sha=None,
-            status=GitHubOperationStatus.UNKNOWN,  # pending = unknown до завершения
+            status=GitHubOperationStatus.UNKNOWN,
             safe_reason=None,
-            reconciliation_id=uuid4(),
+            reconciliation_id=reconciliation_id,
             initiator_user_id=context.owner_user_id,
-            created_at=datetime.now(timezone.utc).isoformat(),
-            updated_at=datetime.now(timezone.utc).isoformat(),
+            created_at=datetime.now(UTC).isoformat(),
+            updated_at=datetime.now(UTC).isoformat(),
         )
 
+        self._contexts_by_reconciliation[reconciliation_id] = context
+        if hasattr(self._actions, "save_context"):
+            await self._actions.save_context(reconciliation_id, context, idempotency_key)
         await self._actions.create(action)
-
-        logger.info(
-            "Recorded GitHub action intent",
-            extra={
-                "action_id": str(action.id),
-                "operation": context.operation_type.value,
-                "run_id": str(context.run_id),
-                "idempotency_key": idempotency_key,
-                "expected_sha": action.expected_sha,
-            },
-        )
 
         return IdempotencyCheckResult(
             can_proceed=True,
@@ -169,20 +129,6 @@ class GitHubIdempotencyManager:
         status: GitHubOperationStatus,
         safe_reason: str | None = None,
     ) -> GitHubActionRecord:
-        """
-        Завершение операции: обновление записи с фактическим результатом.
-
-        Вызывается ПОСЛЕ успешного внешнего вызова к GitHub API.
-
-        Args:
-            reconciliation_id: ID сверки из prepare_operation
-            actual_sha: Фактический SHA после операции
-            status: Результат операции (success/conflict/forbidden/unknown)
-            safe_reason: Безопасное описание причины (для логирования/UI)
-
-        Returns:
-            Обновлённая GitHubActionRecord
-        """
         action = await self._actions.find_by_reconciliation_id(reconciliation_id)
         if not action:
             raise GitHubIdempotencyError(
@@ -207,21 +153,10 @@ class GitHubIdempotencyManager:
             reconciliation_id=action.reconciliation_id,
             initiator_user_id=action.initiator_user_id,
             created_at=action.created_at,
-            updated_at=datetime.now(timezone.utc).isoformat(),
+            updated_at=datetime.now(UTC).isoformat(),
         )
 
         await self._actions.update(updated)
-
-        logger.info(
-            "Completed GitHub action",
-            extra={
-                "action_id": str(action.id),
-                "operation": action.operation_type.value,
-                "status": status.value,
-                "actual_sha": actual_sha,
-            },
-        )
-
         return updated
 
     async def reconcile_unknown(
@@ -230,20 +165,8 @@ class GitHubIdempotencyManager:
     ) -> GitHubOperationResult:
         """
         Сверка состояния для операции со статусом unknown (правило 10).
-
-        Вызывается при:
-        - Повторной доставке Celery задачи
-        - Повторном нажатии кнопки пользователем
-        - Любом случае, когда предыдущий вызов вернул unknown
-
-        Args:
-            reconciliation_id: ID сверки из записи действия
-
-        Returns:
-            GitHubOperationResult с актуальным статусом из GitHub
-
-        Raises:
-            GitHubIdempotencyError: если снимок стал stale (409/conflict)
+        Сначала восстанавливает полный контекст операции и сверяет фактический исход
+        в GitHub, не теряя expected_target_sha / expected_head_sha.
         """
         action = await self._actions.find_by_reconciliation_id(reconciliation_id)
         if not action:
@@ -254,7 +177,6 @@ class GitHubIdempotencyManager:
             )
 
         if action.status != GitHubOperationStatus.UNKNOWN:
-            # Уже есть определённый результат — возвращаем его
             return GitHubOperationResult(
                 operation_type=action.operation_type,
                 repo_owner=action.repo_owner,
@@ -268,53 +190,58 @@ class GitHubIdempotencyManager:
                 reconciliation_id=action.reconciliation_id,
             )
 
-        # Проверяем актуальность снимка перед сверкой
-        context = OperationContext(
-            operation_type=action.operation_type,
-            owner_user_id=action.user_id,
-            owner_github_login="",  # не нужно для read-only сверки
-            run_id=action.run_id or uuid4(),
-            attempt_id=uuid4(),  # не критично для сверки
-            repo_owner=action.repo_owner or "",
-            repo_name=action.repo_name or "",
-            branch_name=action.branch_name or "",
-            expected_source_sha=action.expected_sha or "",
-            expected_target_sha="",  # будет проверено в _check_snapshot_freshness
-        )
+        context = self._contexts_by_reconciliation.get(reconciliation_id)
+        if context is None and hasattr(self._actions, "get_context"):
+            context = await self._actions.get_context(reconciliation_id)
 
-        stale_check = await self._check_snapshot_freshness(context)
-        if not stale_check.can_proceed:
-            # Снимок stale — обновляем запись и возвращаем conflict
+        # 1. Сначала сверяем фактический исход в GitHub (на случай,
+        #    если мерж/пуш уже прошёл до таймаута)
+        result = await self._github.reconcile_operation(action)
+        if result.status == GitHubOperationStatus.SUCCESS:
             await self.complete_operation(
                 reconciliation_id=reconciliation_id,
-                actual_sha=action.expected_sha or "",
-                status=GitHubOperationStatus.CONFLICT,
-                safe_reason=stale_check.reason or "Snapshot became stale (source/target SHA changed)",
+                actual_sha=result.actual_sha or action.expected_sha or "",
+                status=GitHubOperationStatus.SUCCESS,
+                safe_reason=result.safe_reason,
             )
-            raise GitHubIdempotencyError(
-                ErrorCategory.STALE,
-                stale_check.reason or "Snapshot became stale",
-                status_code=409,
-            )
+            return result
 
-        # Выполняем сверку через GitHub клиент
-        result = await self._github.reconcile_operation(action)
+        # 2. Если операция ещё не выполнена, проверяем актуальность снимка по полному контексту
+        if context is not None:
+            stale_check = await self._check_snapshot_freshness(context)
+            if not stale_check.can_proceed:
+                await self.complete_operation(
+                    reconciliation_id=reconciliation_id,
+                    actual_sha=action.expected_sha or "",
+                    status=GitHubOperationStatus.CONFLICT,
+                    safe_reason=stale_check.reason
+                    or "Snapshot became stale (source/target SHA changed)",
+                )
+                raise GitHubIdempotencyError(
+                    ErrorCategory.STALE,
+                    stale_check.reason or "Snapshot became stale",
+                    status_code=409,
+                )
 
-        # Обновляем запись с результатом сверки
+        # 3. Записываем результат сверки
         await self.complete_operation(
             reconciliation_id=reconciliation_id,
             actual_sha=result.actual_sha or action.expected_sha or "",
             status=result.status,
             safe_reason=result.safe_reason,
         )
-
+        if result.status == GitHubOperationStatus.CONFLICT:
+            raise GitHubIdempotencyError(
+                ErrorCategory.STALE,
+                result.safe_reason or "Reconciliation detected conflict",
+                status_code=409,
+            )
         return result
 
     async def get_action_status(
         self,
         reconciliation_id: UUID,
     ) -> GitHubOperationResult | None:
-        """Получить текущий статус операции по reconciliation_id."""
         action = await self._actions.find_by_reconciliation_id(reconciliation_id)
         if not action:
             return None
@@ -332,15 +259,11 @@ class GitHubIdempotencyManager:
             reconciliation_id=action.reconciliation_id,
         )
 
-    # ==================== PRIVATE METHODS ====================
-
     async def _handle_existing_action(
         self,
         existing: GitHubActionRecord,
         context: OperationContext,
     ) -> IdempotencyCheckResult:
-        """Обработка существующей записи действия (дубль/повтор)."""
-        # Если операция уже завершена успешно — не повторяем
         if existing.status == GitHubOperationStatus.SUCCESS:
             return IdempotencyCheckResult(
                 can_proceed=False,
@@ -349,21 +272,18 @@ class GitHubIdempotencyManager:
                 requires_reconciliation=False,
             )
 
-        # Если операция завершилась конфликтом или запретом — не повторяем
         if existing.status in (GitHubOperationStatus.CONFLICT, GitHubOperationStatus.FORBIDDEN):
             return IdempotencyCheckResult(
                 can_proceed=False,
-                reason=f"Operation previously failed with {existing.status.value}: {existing.safe_reason}",
+                reason=f"Operation previously failed with {existing.status.value}: "
+                f"{existing.safe_reason}",
                 existing_action=existing,
                 requires_reconciliation=False,
             )
 
-        # Если статус unknown — требуется сверка (правило 10)
         if existing.status == GitHubOperationStatus.UNKNOWN:
-            # Проверяем, не стал ли снимок stale
             stale_check = await self._check_snapshot_freshness(context)
             if not stale_check.can_proceed:
-                # Обновляем существующую запись на conflict
                 await self.complete_operation(
                     reconciliation_id=existing.reconciliation_id,
                     actual_sha=existing.expected_sha or "",
@@ -385,7 +305,6 @@ class GitHubIdempotencyManager:
                 reconciliation_id=existing.reconciliation_id,
             )
 
-        # Неожиданный статус
         return IdempotencyCheckResult(
             can_proceed=False,
             reason=f"Unexpected action status: {existing.status.value}",
@@ -397,24 +316,15 @@ class GitHubIdempotencyManager:
         self,
         context: OperationContext,
     ) -> IdempotencyCheckResult:
-        """
-        Проверка актуальности снимка: source_sha и target_sha не должны измениться.
-
-        Правило 5 раздела 5: "Новые коммиты, изменённые тесты и конфликт отменяют прежний допуск"
-        """
-        # Для push_tests проверяем source_sha (ветка ai-tests/<run-id> создаётся от source)
-        # Для create_pr проверяем source_sha и target_sha
-        # Для merge_pr проверяем target_sha и expected_head_sha (PR head)
-
         if context.operation_type in (
             GitHubOperationType.PUSH_TESTS,
             GitHubOperationType.CREATE_PR,
         ):
-            # Проверяем source_sha
             actual_source_sha = await self._github.get_branch_sha(
                 context.repo_owner,
                 context.repo_name,
-                context.branch_name if context.operation_type == GitHubOperationType.PUSH_TESTS
+                context.branch_name
+                if context.operation_type == GitHubOperationType.PUSH_TESTS
                 else f"ai-tests/{context.run_id}",
             )
             if actual_source_sha and actual_source_sha != context.expected_source_sha:
@@ -430,14 +340,11 @@ class GitHubIdempotencyManager:
             GitHubOperationType.CREATE_PR,
             GitHubOperationType.MERGE_PR,
         ):
-            # Проверяем target_sha
             actual_target_sha = await self._github.get_branch_sha(
                 context.repo_owner,
                 context.repo_name,
-                "main",  # target branch — в контексте должна быть target ветка
+                context.target_branch,
             )
-            # TODO: target branch name должен приходить в контексте
-            # Для MVP используем main, но в production нужно передавать target_branch
             if actual_target_sha and actual_target_sha != context.expected_target_sha:
                 return IdempotencyCheckResult(
                     can_proceed=False,
@@ -447,7 +354,6 @@ class GitHubIdempotencyManager:
                     ),
                 )
 
-        # Проверяем, что PR head совпадает с expected_head_sha
         if (
             context.operation_type == GitHubOperationType.MERGE_PR
             and context.pr_number
@@ -471,7 +377,6 @@ class GitHubIdempotencyManager:
 
     @staticmethod
     def _generate_idempotency_key(context: OperationContext) -> str:
-        """Генерация детерминированного ключа идемпотентности."""
         parts = [
             context.operation_type.value,
             str(context.owner_user_id),
@@ -490,28 +395,19 @@ class GitHubIdempotencyManager:
         return "|".join(parts)
 
 
-# ==================== ABSTRACT INTERFACES (for dependency injection) ====================
-
 class GitHubActionRepository:
-    """
-    Абстрактный репозиторий для GitHubActionRecord.
-    Реализация должна быть предоставлена через DI (например, SQLAlchemy/asyncpg).
-    """
+    """Абстрактный репозиторий для GitHubActionRecord."""
 
     async def create(self, action: GitHubActionRecord) -> None:
-        """Создать запись намерения."""
         raise NotImplementedError
 
     async def update(self, action: GitHubActionRecord) -> None:
-        """Обновить запись (статус, actual_sha, safe_reason)."""
         raise NotImplementedError
 
     async def find_by_idempotency_key(self, key: str) -> GitHubActionRecord | None:
-        """Найти запись по ключу идемпотентности."""
         raise NotImplementedError
 
     async def find_by_reconciliation_id(self, reconciliation_id: UUID) -> GitHubActionRecord | None:
-        """Найти запись по reconciliation_id."""
         raise NotImplementedError
 
     async def find_by_run_and_operation(
@@ -519,15 +415,24 @@ class GitHubActionRepository:
         run_id: UUID,
         operation_type: GitHubOperationType,
     ) -> list[GitHubActionRecord]:
-        """Найти все действия для run и типа операции."""
+        raise NotImplementedError
+
+    async def save_context(
+        self,
+        reconciliation_id: UUID,
+        context: OperationContext,
+        idempotency_key: str,
+    ) -> None:
+        """Сохранить контекст операции для последующей сверки."""
+        raise NotImplementedError
+
+    async def get_context(self, reconciliation_id: UUID) -> OperationContext | None:
+        """Восстановить контекст операции по reconciliation_id."""
         raise NotImplementedError
 
 
 class GitHubClient:
-    """
-    Абстрактный клиент для read-only операций сверки с GitHub.
-    Реализация использует GitHub App installation token.
-    """
+    """Абстрактный клиент для read-only операций сверки с GitHub."""
 
     async def get_branch_sha(
         self,
@@ -535,10 +440,6 @@ class GitHubClient:
         repo_name: str,
         branch_name: str,
     ) -> str | None:
-        """
-        Получить текущий SHA ветки.
-        Returns None если ветка не найдена.
-        """
         raise NotImplementedError
 
     async def get_pr_head_sha(
@@ -547,18 +448,18 @@ class GitHubClient:
         repo_name: str,
         pr_number: int,
     ) -> str | None:
-        """Получить head SHA открытого PR."""
         raise NotImplementedError
 
     async def reconcile_operation(
         self,
         action: GitHubActionRecord,
     ) -> GitHubOperationResult:
-        """
-        Сверка фактического состояния операции в GitHub.
+        raise NotImplementedError
 
-        Для push_tests: проверяет, существует ли ветка ai-tests/<run-id> с ожидаемым SHA
-        Для create_pr: проверяет, существует ли PR с ожидаемым head SHA
-        Для merge_pr: проверяет, замержен ли PR с ожидаемым head SHA
-        """
+    async def execute_merge(
+        self,
+        context: OperationContext,
+        reconciliation_id: UUID,
+    ) -> GitHubOperationResult:
+        """Выполнить мерж PR через GitHub merge API с передачей ожидаемого head SHA."""
         raise NotImplementedError

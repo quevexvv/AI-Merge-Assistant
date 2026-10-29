@@ -2,10 +2,14 @@
 RunOrchestrator — конечный автомат оркестрации прогонов.
 
 Правила (team-guide.md, разделы 3, 4, 5, 9):
-- Состояния выполнения: queued -> preparing -> generating -> validating -> running -> checking_coverage -> improving -> completed / failed / cancelled
-- Состояние выполнения, вердикт (passed/failed/not_applicable), актуальность (current/stale) и статус мержа хранятся РАЗДЕЛЬНО
-- ASSUMPTION T3: начальная генерация + максимум 2 итерации доработки (improving), таймаут 120с на этап, 60с на запрос, макс 3 транспортные попытки
-- ValidationFeedback должен соответствовать текущему snapshot_id и test_bundle_hash (чужой отвергается)
+- Состояния выполнения: queued -> preparing -> generating -> validating -> running
+  -> checking_coverage -> improving -> completed / failed / cancelled
+- Состояние выполнения, вердикт (passed/failed/not_applicable), актуальность (current/stale)
+  и статус мержа хранятся РАЗДЕЛЬНО
+- ASSUMPTION T3: начальная генерация + максимум 2 итерации доработки (improving),
+  таймаут 120с на этап, 60с на запрос, макс 3 транспортные попытки
+- ValidationFeedback должен соответствовать текущему snapshot_id и test_bundle_hash
+  (чужой отвергается)
 - Причины ошибок: model, environment, tests, quota, rights, stale
 """
 
@@ -13,7 +17,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 from app.schemas import (
@@ -33,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 class OrchestratorError(Exception):
     """Базовая ошибка оркестратора."""
+
     def __init__(self, category: ErrorCategory, message: str, state: ExecutionState | None = None):
         self.category = category
         self.state = state
@@ -41,6 +46,7 @@ class OrchestratorError(Exception):
 
 class InvalidTransitionError(OrchestratorError):
     """Недопустимый переход состояния."""
+
     def __init__(self, from_state: ExecutionState, to_state: ExecutionState):
         super().__init__(
             ErrorCategory.MODEL,
@@ -53,18 +59,21 @@ class InvalidTransitionError(OrchestratorError):
 
 class StaleSnapshotError(OrchestratorError):
     """Снимок устарел (stale)."""
+
     def __init__(self, message: str = "Snapshot is stale"):
         super().__init__(ErrorCategory.STALE, message)
 
 
 class FeedbackMismatchError(OrchestratorError):
     """ValidationFeedback не соответствует текущему снимку/хешу тестов."""
+
     def __init__(self, message: str):
         super().__init__(ErrorCategory.MODEL, message)
 
 
 class BudgetExhaustedError(OrchestratorError):
     """Бюджет доработок исчерпан."""
+
     def __init__(self, message: str = "Improvement budget exhausted"):
         super().__init__(ErrorCategory.QUOTA, message)
 
@@ -75,6 +84,7 @@ class RunState:
     Неизменяемое представление состояния прогона.
     Все поля обновляются атомарно через RunOrchestrator.
     """
+
     run_id: UUID
     execution_state: ExecutionState
     verdict: Verdict | None = None
@@ -89,10 +99,11 @@ class RunState:
     remaining_budget: int = MAX_IMPROVING_ITERATIONS
     error_category: ErrorCategory | None = None
     error_message: str | None = None
-    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def with_changes(self, **kwargs) -> RunState:
         """Создаёт новый RunState с изменениями (immutable pattern), не затирая поля при None."""
+
         def _pick(key: str, current_val):
             val = kwargs.get(key)
             return current_val if val is None else val
@@ -112,7 +123,7 @@ class RunState:
             remaining_budget=_pick("remaining_budget", self.remaining_budget),
             error_category=_pick("error_category", self.error_category),
             error_message=_pick("error_message", self.error_message),
-            updated_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(UTC),
         )
 
 
@@ -264,7 +275,8 @@ class RunOrchestrator:
             )
         if current.test_bundle_hash != feedback.test_bundle_hash:
             raise FeedbackMismatchError(
-                f"Feedback test_bundle_hash {feedback.test_bundle_hash} != current {current.test_bundle_hash}"
+                f"Feedback test_bundle_hash {feedback.test_bundle_hash}"
+                f" != current {current.test_bundle_hash}"
             )
 
         next_iteration = current.improving_iteration + 1
@@ -289,7 +301,11 @@ class RunOrchestrator:
         message: str,
     ) -> RunState:
         """Переход в failed из любого нетерминального состояния."""
-        if current.execution_state in (ExecutionState.COMPLETED, ExecutionState.FAILED, ExecutionState.CANCELLED):
+        if current.execution_state in (
+            ExecutionState.COMPLETED,
+            ExecutionState.FAILED,
+            ExecutionState.CANCELLED,
+        ):
             raise InvalidTransitionError(current.execution_state, ExecutionState.FAILED)
 
         return self.transition(
@@ -302,7 +318,11 @@ class RunOrchestrator:
 
     def cancel(self, current: RunState) -> RunState:
         """Отмена прогона: -> cancelled."""
-        if current.execution_state in (ExecutionState.COMPLETED, ExecutionState.FAILED, ExecutionState.CANCELLED):
+        if current.execution_state in (
+            ExecutionState.COMPLETED,
+            ExecutionState.FAILED,
+            ExecutionState.CANCELLED,
+        ):
             raise InvalidTransitionError(current.execution_state, ExecutionState.CANCELLED)
 
         return self.transition(current, ExecutionState.CANCELLED)
@@ -359,19 +379,23 @@ class RunOrchestrator:
         """
         if current.snapshot_id != feedback.snapshot_id:
             raise FeedbackMismatchError(
-                f"Feedback snapshot_id mismatch: expected {current.snapshot_id}, got {feedback.snapshot_id}"
+                f"Feedback snapshot_id mismatch: expected {current.snapshot_id},"
+                f" got {feedback.snapshot_id}"
             )
         if current.test_bundle_hash != feedback.test_bundle_hash:
             raise FeedbackMismatchError(
-                f"Feedback test_bundle_hash mismatch: expected {current.test_bundle_hash}, got {feedback.test_bundle_hash}"
+                f"Feedback test_bundle_hash mismatch: expected {current.test_bundle_hash},"
+                f" got {feedback.test_bundle_hash}"
             )
         if feedback.iteration != current.improving_iteration + 1:
             raise FeedbackMismatchError(
-                f"Feedback iteration {feedback.iteration} != expected {current.improving_iteration + 1}"
+                f"Feedback iteration {feedback.iteration}"
+                f" != expected {current.improving_iteration + 1}"
             )
         if feedback.remaining_budget != current.remaining_budget - 1:
             raise FeedbackMismatchError(
-                f"Feedback remaining_budget {feedback.remaining_budget} != expected {current.remaining_budget - 1}"
+                f"Feedback remaining_budget {feedback.remaining_budget}"
+                f" != expected {current.remaining_budget - 1}"
             )
 
     # ==================== HELPERS ====================
@@ -405,6 +429,7 @@ class RunOrchestrator:
 
 
 # ==================== T3 CALIBRATION CONSTANTS ====================
+
 
 class T3Calibration:
     """
@@ -446,6 +471,7 @@ class T3Calibration:
         if celery_retries > 0 and adapter_retries > 0:
             raise OrchestratorError(
                 ErrorCategory.MODEL,
-                f"Retry multiplication detected: celery_retries={celery_retries}, adapter_retries={adapter_retries}. "
+                f"Retry multiplication detected: celery_retries={celery_retries},"
+                f" adapter_retries={adapter_retries}. "
                 "Retries must be handled at exactly one layer.",
             )

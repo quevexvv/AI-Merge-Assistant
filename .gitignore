@@ -36,3 +36,7 @@ coverage/
 # OS / editor extras
 *.swp
 *.swo
+
+# Allow application coverage package
+!**/app/core/coverage/
+!**/app/core/coverage/**

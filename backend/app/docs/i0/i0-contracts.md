@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field, HttpUrl
 from typing import Optional, Literal
 from uuid import UUID
 
+
 class SourceSnapshot(BaseModel):
     schema_version: Literal["T1"] = Field(default="T1", frozen=True)
 
@@ -48,11 +49,15 @@ class SourceSnapshot(BaseModel):
     diff_artifact_path: Optional[str] = Field(None, description="Путь к артефакту diff на volume")
 
     # Фиксированное содержимое / ссылка на артефакт
-    content_reference: str = Field(..., description="Ссылка на артефакт или фиксированное содержимое")
+    content_reference: str = Field(
+        ..., description="Ссылка на артефакт или фиксированное содержимое"
+    )
     content_hash: str = Field(..., min_length=32, max_length=128, description="SHA-256 содержимого")
 
     # Профиль окружения
-    environment_profile: str = Field(..., min_length=1, max_length=128, description="Имя профиля зависимостей/окружения")
+    environment_profile: str = Field(
+        ..., min_length=1, max_length=128, description="Имя профиля зависимостей/окружения"
+    )
 ```
 
 **Правила валидации:**
@@ -72,6 +77,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Literal
 from uuid import UUID
 
+
 class GenerationContext(BaseModel):
     schema_version: Literal["T1"] = Field(default="T1", frozen=True)
 
@@ -79,7 +85,9 @@ class GenerationContext(BaseModel):
     source_snapshot: SourceSnapshot = Field(...)
 
     # Режим
-    mode: Literal["default", "lazy"] = Field(..., description="default требует описание; lazy выводит ожидания из diff")
+    mode: Literal["default", "lazy"] = Field(
+        ..., description="default требует описание; lazy выводит ожидания из diff"
+    )
 
     # Описание / требования
     description: Optional[str] = Field(None, max_length=10000)
@@ -89,14 +97,20 @@ class GenerationContext(BaseModel):
     diff_text: Optional[str] = Field(None)
 
     # Фрагменты и существующие тесты
-    code_fragments: List[str] = Field(default_factory=list, description="Подготовленные фрагменты кода (AST-выборки)")
+    code_fragments: List[str] = Field(
+        default_factory=list, description="Подготовленные фрагменты кода (AST-выборки)"
+    )
     existing_tests: List[str] = Field(default_factory=list, description="Текст существующих тестов")
 
     # ID источников
-    source_ids: List[UUID] = Field(default_factory=list, description="ID источников (документы, репозитории)")
+    source_ids: List[UUID] = Field(
+        default_factory=list, description="ID источников (документы, репозитории)"
+    )
 
     # Разрешённые пути
-    allowed_paths: List[str] = Field(default_factory=list, description="Разрешённые пути для генерации")
+    allowed_paths: List[str] = Field(
+        default_factory=list, description="Разрешённые пути для генерации"
+    )
 
     # Профиль зависимостей
     dependency_profile: str = Field(..., min_length=1, max_length=128)
@@ -118,12 +132,16 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Literal
 from uuid import UUID
 
+
 class ScenarioItem(BaseModel):
     schema_version: Literal["T1"] = Field(default="T1", frozen=True)
     scenario_id: UUID = Field(...)
     source_refs: List[UUID] = Field(..., description="Ссылки на источники")
-    requirement_tag: Literal["requirements", "inferred"] = Field(..., description="Маркировка происхождения ожидания")
+    requirement_tag: Literal["requirements", "inferred"] = Field(
+        ..., description="Маркировка происхождения ожидания"
+    )
     gherkin_text: str = Field(..., min_length=1, max_length=20000)
+
 
 class ScenarioSet(BaseModel):
     schema_version: Literal["T1"] = Field(default="T1", frozen=True)
@@ -131,16 +149,20 @@ class ScenarioSet(BaseModel):
     run_id: UUID = Field(...)
     snapshot_id: UUID = Field(...)
     scenarios: List[ScenarioItem] = Field(..., min_items=1)
-    prompt_model: str = Field(..., min_length=1, max_length=256, description="Модель/версия промпта")
+    prompt_model: str = Field(
+        ..., min_length=1, max_length=256, description="Модель/версия промпта"
+    )
     prompt_version: str = Field(..., min_length=1, max_length=32)
     usage: Literal["known", "unknown"] = Field(default="unknown", description="Usage либо unknown")
     set_hash: str = Field(..., min_length=32, max_length=128, description="Хеш набора сценариев")
+
 
 class TestItem(BaseModel):
     schema_version: Literal["T1"] = Field(default="T1", frozen=True)
     test_path: str = Field(..., min_length=1, max_length=512, description="Путь к файлу теста")
     test_text: str = Field(..., min_length=1, max_length=50000)
     linked_scenario_ids: List[UUID] = Field(default_factory=list)
+
 
 class TestBundle(BaseModel):
     schema_version: Literal["T1"] = Field(default="T1", frozen=True)
@@ -171,6 +193,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Literal
 from uuid import UUID
 
+
 class RunnerJob(BaseModel):
     schema_version: Literal["T1"] = Field(default="T1", frozen=True)
 
@@ -197,8 +220,12 @@ class RunnerJob(BaseModel):
     disk_limit_mb: int = Field(..., ge=100, le=10000)
 
     # Фиксированный режим (без секретов и произвольных команд)
-    mode: Literal["collect", "test"] = Field(..., description="collect — сбор; test — запуск тестов")
-    fixed_command: Optional[str] = Field(None, max_length=1024, description="Фиксированная команда, не произвольная")
+    mode: Literal["collect", "test"] = Field(
+        ..., description="collect — сбор; test — запуск тестов"
+    )
+    fixed_command: Optional[str] = Field(
+        None, max_length=1024, description="Фиксированная команда, не произвольная"
+    )
 ```
 
 **Правила валидации:**
@@ -218,6 +245,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Literal, Dict
 from uuid import UUID
 
+
 class ExecutionReport(BaseModel):
     schema_version: Literal["T1"] = Field(default="T1", frozen=True)
 
@@ -229,7 +257,9 @@ class ExecutionReport(BaseModel):
     test_bundle_hash: str = Field(..., min_length=32, max_length=128)
 
     # Digest образа
-    image_digest: str = Field(..., min_length=32, max_length=128, description="Digest sandbox-образа")
+    image_digest: str = Field(
+        ..., min_length=32, max_length=128, description="Digest sandbox-образа"
+    )
 
     # Статус / exit code
     status: Literal["success", "failed", "timeout", "cancelled", "unknown"] = Field(...)
@@ -240,14 +270,20 @@ class ExecutionReport(BaseModel):
     test_result: Optional[Dict] = Field(None, description="Результат выполнения тестов")
 
     # Bounded-логи
-    bounded_logs: List[str] = Field(default_factory=list, description="Ограниченные логи (без секретов)")
+    bounded_logs: List[str] = Field(
+        default_factory=list, description="Ограниченные логи (без секретов)"
+    )
     log_limit_lines: int = Field(default=500, ge=1, le=5000)
 
     # Сырые отчёты покрытия
-    raw_coverage_reports: List[str] = Field(default_factory=list, description="Пути к сырым .coverage или XML")
+    raw_coverage_reports: List[str] = Field(
+        default_factory=list, description="Пути к сырым .coverage или XML"
+    )
 
     # Причина сбоя / таймаута
-    failure_reason: Optional[str] = Field(None, max_length=2000, description="Безопасная причина (без секретов)")
+    failure_reason: Optional[str] = Field(
+        None, max_length=2000, description="Безопасная причина (без секретов)"
+    )
     timeout_reason: Optional[str] = Field(None, max_length=2000)
 ```
 
@@ -268,6 +304,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 from uuid import UUID
 
+
 class ValidationFeedback(BaseModel):
     schema_version: Literal["T1"] = Field(default="T1", frozen=True)
 
@@ -276,10 +313,14 @@ class ValidationFeedback(BaseModel):
     test_bundle_hash: str = Field(..., min_length=32, max_length=128)
 
     # Структурированные ошибки
-    structured_errors: List[Dict] = Field(default_factory=list, description="Ошибки с типом, путём, сообщением")
+    structured_errors: List[Dict] = Field(
+        default_factory=list, description="Ошибки с типом, путём, сообщением"
+    )
 
     # Непокрытые изменённые строки
-    uncovered_changed_lines: List[int] = Field(default_factory=list, description="Номера строк, изменённых и не покрытых")
+    uncovered_changed_lines: List[int] = Field(
+        default_factory=list, description="Номера строк, изменённых и не покрытых"
+    )
 
     # Итерация
     iteration: int = Field(..., ge=1, le=10, description="Номер итерации доработки")
@@ -305,6 +346,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Literal
 from uuid import UUID
 
+
 class MergeDecision(BaseModel):
     schema_version: Literal["T1"] = Field(default="T1", frozen=True)
 
@@ -323,10 +365,14 @@ class MergeDecision(BaseModel):
 
     # Допуск или причины запрета
     allowed: bool = Field(...)
-    denial_reasons: List[str] = Field(default_factory=list, description="Причины запрета (без утечки чужих данных)")
+    denial_reasons: List[str] = Field(
+        default_factory=list, description="Причины запрета (без утечки чужих данных)"
+    )
 
     # Режим
-    mode: Literal["manual", "auto"] = Field(..., description="manual — основной; auto — только после явного включения")
+    mode: Literal["manual", "auto"] = Field(
+        ..., description="manual — основной; auto — только после явного включения"
+    )
 
     # Серверная метка
     server_created_at: str = Field(..., description="ISO-8601, только сервер")
@@ -349,11 +395,14 @@ from pydantic import BaseModel, Field
 from typing import Optional, Literal
 from uuid import UUID
 
+
 class GitHubOperationResult(BaseModel):
     schema_version: Literal["T1"] = Field(default="T1", frozen=True)
 
     # Тип операции
-    operation_type: Literal["read_diff", "push_tests", "create_pr", "merge_pr", "check_status", "verify_webhook"] = Field(...)
+    operation_type: Literal[
+        "read_diff", "push_tests", "create_pr", "merge_pr", "check_status", "verify_webhook"
+    ] = Field(...)
 
     # Repo / branch / PR
     repo_owner: Optional[str] = Field(None, min_length=1, max_length=255)
@@ -369,7 +418,9 @@ class GitHubOperationResult(BaseModel):
     status: Literal["success", "conflict", "forbidden", "unknown"] = Field(...)
 
     # Безопасная причина
-    safe_reason: Optional[str] = Field(None, max_length=2000, description="Безопасная причина без утечки секретов")
+    safe_reason: Optional[str] = Field(
+        None, max_length=2000, description="Безопасная причина без утечки секретов"
+    )
 
     # ID для сверки повтора
     reconciliation_id: UUID = Field(..., description="ID для сверки повторной доставки")

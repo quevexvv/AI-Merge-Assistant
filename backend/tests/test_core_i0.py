@@ -144,7 +144,8 @@ def _make_exec_report(
 
 
 def test_coverage_calculator_passes_at_90_percent_and_ignores_tests(tmp_path: Path):
-    # Изменено 10 строк в src/service.py и 5 строк в tests/test_service.py (тесты не входят в знаменатель)
+    # Изменено 10 строк в src/service.py и 5 строк в tests/test_service.py
+    # (тесты не входят в знаменатель)
     diff_text = (
         "--- a/src/service.py\n"
         "+++ b/src/service.py\n"
@@ -152,8 +153,7 @@ def test_coverage_calculator_passes_at_90_percent_and_ignores_tests(tmp_path: Pa
         + "".join(f"+x_{i} = {i}\n" for i in range(1, 11))
         + "--- a/tests/test_service.py\n"
         "+++ b/tests/test_service.py\n"
-        "@@ -1,0 +1,5 @@\n"
-        + "".join(f"+assert {i} == {i}\n" for i in range(1, 6))
+        "@@ -1,0 +1,5 @@\n" + "".join(f"+assert {i} == {i}\n" for i in range(1, 6))
     )
     src_file = tmp_path / "src" / "service.py"
     src_file.parent.mkdir(parents=True, exist_ok=True)
@@ -185,13 +185,7 @@ def test_coverage_calculator_passes_at_90_percent_and_ignores_tests(tmp_path: Pa
 
 def test_coverage_calculator_returns_not_applicable_when_zero_lines(tmp_path: Path):
     # Diff меняет только README.md -> 0 исполняемых Python-строк -> N/A, а не 100%
-    diff_text = (
-        "--- a/README.md\n"
-        "+++ b/README.md\n"
-        "@@ -1 +1,2 @@\n"
-        " # Title\n"
-        "+Docs update\n"
-    )
+    diff_text = "--- a/README.md\n+++ b/README.md\n@@ -1 +1,2 @@\n # Title\n+Docs update\n"
     cov_json = tmp_path / "coverage.json"
     cov_json.write_text(json.dumps({"files": {}}))
 
@@ -277,7 +271,9 @@ def test_t3_no_retry_multiplication():
 # =====================================================================
 
 
-def _make_cov_dto(run_id: UUID, attempt_id: UUID, covered: int, executable: int, verdict: Verdict) -> CoverageReportDTO:
+def _make_cov_dto(
+    run_id: UUID, attempt_id: UUID, covered: int, executable: int, verdict: Verdict
+) -> CoverageReportDTO:
     pct = (covered / executable * 100.0) if executable > 0 else None
     return CoverageReportDTO(
         attempt_id=attempt_id,
@@ -416,6 +412,14 @@ class InMemoryActionRepo(GitHubActionRepository):
             if a.run_id == run_id and a.operation_type == operation_type
         ]
 
+    async def save_context(
+        self, reconciliation_id: UUID, context: OperationContext, idempotency_key: str
+    ) -> None:
+        pass
+
+    async def get_context(self, reconciliation_id: UUID) -> OperationContext | None:
+        return None
+
 
 class FakeGitHubClient(GitHubClient):
     def __init__(self, branch_sha: str = SOURCE_SHA, pr_head_sha: str = SOURCE_SHA) -> None:
@@ -444,6 +448,22 @@ class FakeGitHubClient(GitHubClient):
             reconciliation_id=action.reconciliation_id,
         )
 
+    async def execute_merge(
+        self, context: OperationContext, reconciliation_id: UUID
+    ) -> GitHubOperationResult:
+        return GitHubOperationResult(
+            operation_type=GitHubOperationType.MERGE_PR,
+            repo_owner=context.repo_owner,
+            repo_name=context.repo_name,
+            branch_name=context.branch_name,
+            pr_number=context.pr_number,
+            expected_sha=context.expected_head_sha or context.expected_source_sha,
+            actual_sha=context.expected_head_sha or context.expected_source_sha,
+            status=GitHubOperationStatus.SUCCESS,
+            safe_reason=None,
+            reconciliation_id=reconciliation_id,
+        )
+
 
 def test_github_idempotency_blocks_stale_pr_head():
     repo = InMemoryActionRepo()
@@ -470,3 +490,76 @@ def test_github_idempotency_blocks_stale_pr_head():
     res = asyncio.run(mgr.prepare_operation(ctx))
     assert not res.can_proceed
     assert res.reason is not None and "stale" in res.reason.lower()
+
+
+def test_merge_gate_blocks_failed_run_verdict_even_with_95_percent_coverage():
+    """Регрессия P1: высокое покрытие (95%) при verdict=FAILED обязано блокировать мерж."""
+    gate = MergeGate()
+    builder = MergeDecisionBuilder(gate)
+    run_id, attempt_id, user_id = uuid4(), uuid4(), uuid4()
+
+    cov = CoverageReportDTO(
+        attempt_id=attempt_id,
+        run_id=run_id,
+        covered_changed_lines=95,
+        executable_changed_lines=100,
+        coverage_percentage=95.0,
+        covered_files=["src/app.py"],
+        uncovered_changed_lines=[1, 2, 3, 4, 5],
+        coverage_verdict=Verdict.PASSED,
+    )
+
+    out = builder.build_from_run_data(
+        run_id=run_id,
+        attempt_id=attempt_id,
+        execution_state=ExecutionState.COMPLETED,
+        verdict=Verdict.FAILED,
+        freshness=Freshness.CURRENT,
+        merge_status=MergeStatus.PENDING,
+        coverage_report=cov,
+        test_bundle_hash=VALID_HASH,
+        source_sha="1111111",
+        target_sha="2222222",
+        owner_user_id=user_id,
+        owner_github_login="aruchimo",
+        auto_merge_enabled=False,
+        target_branch_protected=True,
+        user_has_write_permission=True,
+        github_app_has_write_permission=True,
+    )
+    assert not out.allowed
+    assert any("Run verdict is not passed" in r for r in out.denial_reasons)
+
+
+def test_github_idempotency_reconcile_unknown_preserves_target_sha():
+    """Регрессия P1: reconcile_unknown после prepare_operation(MERGE_PR) не теряет target_sha."""
+    import asyncio
+
+    from app.core.github_idempotency import GitHubIdempotencyManager, OperationContext
+    from app.schemas import GitHubOperationStatus, GitHubOperationType
+
+    repo = InMemoryActionRepo()
+    client = FakeGitHubClient(branch_sha="1111111", pr_head_sha="1111111")
+    mgr = GitHubIdempotencyManager(repo, client)
+
+    ctx = OperationContext(
+        operation_type=GitHubOperationType.MERGE_PR,
+        owner_user_id=uuid4(),
+        owner_github_login="aruchimo",
+        run_id=uuid4(),
+        attempt_id=uuid4(),
+        repo_owner="aruchimo",
+        repo_name="demo",
+        branch_name="ai-tests/1",
+        expected_source_sha="1111111",
+        expected_target_sha="2222222",
+        expected_head_sha="1111111",
+        pr_number=42,
+    )
+
+    prep = asyncio.run(mgr.prepare_operation(ctx))
+    assert prep.can_proceed
+    assert prep.reconciliation_id is not None
+
+    rec = asyncio.run(mgr.reconcile_unknown(prep.reconciliation_id))
+    assert rec.status == GitHubOperationStatus.SUCCESS
