@@ -1,6 +1,8 @@
 import ast
 import hashlib
+import io
 import json
+from bisect import bisect_left
 from collections.abc import Iterable
 from dataclasses import dataclass
 
@@ -42,8 +44,15 @@ class CodeAnalysis:
     start_line: int
 
 
+def utf8_bytes(text: str) -> bytes:
+    try:
+        return text.encode("utf-8")
+    except UnicodeError:
+        raise InputError("invalid_text_encoding") from None
+
+
 def parse_python(content: str, limits: InputLimits = DEFAULT_LIMITS) -> ast.Module:
-    if len(content.encode("utf-8")) > limits.source_bytes:
+    if len(utf8_bytes(content)) > limits.source_bytes:
         raise InputError("source_size_limit")
     try:
         tree = ast.parse(content, filename="<source>", feature_version=(3, 13))
@@ -55,15 +64,17 @@ def parse_python(content: str, limits: InputLimits = DEFAULT_LIMITS) -> ast.Modu
     return tree
 
 
-def validate_files(files: tuple[SourceFile, ...], limits: InputLimits) -> None:
-    if not files or len(files) > limits.source_files:
+def validate_files(
+    files: tuple[SourceFile, ...], limits: InputLimits, *, allow_empty: bool = False
+) -> None:
+    if (not files and not allow_empty) or len(files) > limits.source_files:
         raise InputError("source_file_limit")
     unique_paths([file.path for file in files])
     total = 0
     for file in files:
         if not file.path.endswith(".py"):
             raise InputError("unsupported_source")
-        size = len(file.content.encode("utf-8"))
+        size = len(utf8_bytes(file.content))
         total += size
         if size > limits.source_bytes or total > limits.total_source_bytes:
             raise InputError("source_size_limit")
@@ -88,7 +99,26 @@ def snapshot_hash(files: tuple[SourceFile, ...], diff: str | None = None) -> str
         "diff": diff,
     }
     serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+    return hashlib.sha256(utf8_bytes(serialized)).hexdigest()
+
+
+def _include_dependencies(tree: ast.Module, selected: set[int]) -> None:
+    definitions: dict[str, set[int]] = {}
+    references: list[set[str]] = []
+    for index, node in enumerate(tree.body):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            definitions.setdefault(node.name, set()).add(index)
+        else:
+            selected.add(index)
+        references.append({item.id for item in ast.walk(node) if isinstance(item, ast.Name)})
+    pending = list(selected)
+    visited_names: set[str] = set()
+    while pending:
+        for name in references[pending.pop()] - visited_names:
+            visited_names.add(name)
+            dependencies = definitions.get(name, set()) - selected
+            selected.update(dependencies)
+            pending.extend(dependencies)
 
 
 def analyze_code(
@@ -98,31 +128,31 @@ def analyze_code(
 ) -> CodeAnalysis:
     safe_path(file.path)
     tree = parse_python(file.content, limits)
-    lines = file.content.splitlines(keepends=True)
-    changed = None if changed_lines is None else set(changed_lines)
+    lines = io.StringIO(file.content, newline="").readlines()
+    changed = None if changed_lines is None else tuple(changed_lines)
     if changed is not None and any(
         type(line) is not int or not 1 <= line <= len(lines) for line in changed
     ):
         raise InputError("changed_line_out_of_range")
+    changed = None if changed is None else sorted(set(changed))
     symbols: list[Symbol] = []
-    selected: list[tuple[int, int]] = []
-    for node in tree.body:
+    ranges: list[tuple[int, int]] = []
+    selected: set[int] = set()
+    for index, node in enumerate(tree.body):
         decorators = getattr(node, "decorator_list", ())
         start = min([node.lineno, *(item.lineno for item in decorators)])
         end = node.end_lineno or node.lineno
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             symbols.append(Symbol(node.name, type(node).__name__, start, end))
-        if changed is None or any(start <= line <= end for line in changed):
-            selected.append((start, end))
-    if changed:
-        selected.extend((line, line) for line in changed)
-    if not selected:
+        ranges.append((start, end))
+        offset = bisect_left(changed, start) if changed is not None else 0
+        if changed is None or (offset < len(changed) and changed[offset] <= end):
+            selected.add(index)
+    if not changed:
         return CodeAnalysis(file.path, tuple(symbols), file.content, 1)
-    selected.extend(
-        (node.lineno, node.end_lineno or node.lineno)
-        for node in tree.body
-        if isinstance(node, (ast.Import, ast.ImportFrom))
-    )
-    start = min(value[0] for value in selected)
-    end = max(value[1] for value in selected)
+    _include_dependencies(tree, selected)
+    spans = [ranges[index] for index in selected]
+    spans.append((changed[0], changed[-1]))
+    start = min(value[0] for value in spans)
+    end = max(value[1] for value in spans)
     return CodeAnalysis(file.path, tuple(symbols), "".join(lines[start - 1 : end]), start)
