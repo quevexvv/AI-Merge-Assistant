@@ -160,3 +160,76 @@ def test_generated_directory_must_be_vacant(environment):
             environment=environment,
             files=(SourceFile("generated_tests/test_existing.py", "x = 1"),),
         )
+
+
+def test_changed_function_keeps_transitive_module_dependencies():
+    code = (
+        "FACTOR = 2\n\ndef double(value):\n    return helper(value)\n\n"
+        "def helper(value):\n    return value * FACTOR\n"
+    )
+    result = analyze_code(SourceFile("sample.py", code), [4])
+    assert result.fragment == code
+
+
+def test_ast_line_numbers_ignore_unicode_line_separators():
+    code = 'LABEL = "first\u2028second"\n\ndef double(value):\n    return value * 2\n'
+    result = analyze_code(SourceFile("sample.py", code), [4])
+    assert "    return value * 2\n" in result.fragment
+
+
+def test_deletion_only_github_snapshot(environment):
+    diff = "--- a/old.py\n+++ /dev/null\n@@ -1 +0,0 @@\n-x = 1\n"
+    result = ContextBuilder().build(
+        run_id="r",
+        snapshot_id="s",
+        environment=environment,
+        files=(),
+        mode="lazy",
+        github=GitHubInput("repo", "a" * 40, "b" * 40, diff),
+    )
+    assert result.measurement_paths == ()
+    assert result.changes[0].deleted
+    assert result.context.sources[0].text == diff
+
+
+def test_diff_handles_unicode_separators_in_python_strings():
+    before = 'label = "first\u2028second"\n'
+    after = before.replace("second", "third")
+    diff = "--- a/sample.py\n+++ b/sample.py\n@@ -1 +1 @@\n-" + before + "+" + after
+    assert parse_diff(diff, (SourceFile("sample.py", after),))[0].added_lines == (1,)
+
+
+def test_diff_rejects_overlapping_original_hunks():
+    diff = "--- a/sample.py\n+++ b/sample.py\n@@ -1 +1 @@\n-a\n+x\n@@ -1 +2 @@\n-a\n+y\n"
+    with pytest.raises(InputError, match="overlapping_diff_hunks"):
+        parse_diff(diff, (SourceFile("sample.py", "x\ny\n"),))
+
+
+def test_unpaired_surrogates_are_reported_as_input_errors(environment):
+    from app.services.parsing.paths import safe_path
+
+    with pytest.raises(InputError, match="invalid_text_encoding"):
+        analyze_code(SourceFile("sample.py", "value = '\ud800'\n"))
+    with pytest.raises(InputError, match="invalid_path"):
+        safe_path("\ud800.py")
+    with pytest.raises(InputError, match="invalid_text_encoding"):
+        ContextBuilder().build(
+            run_id="r",
+            snapshot_id="s",
+            files=(SourceFile("sample.py", "value = 2\n"),),
+            environment=environment,
+            description="\ud800",
+        )
+
+
+def test_empty_upload_remains_invalid(environment):
+    with pytest.raises(InputError, match="source_file_limit"):
+        ContextBuilder().build(run_id="r", snapshot_id="s", files=(), environment=environment)
+
+
+def test_recursive_dependencies_and_crlf_preserve_exact_source():
+    code = (
+        "def first(value):\r\n    return second(value - 1) if value else 0\r\n\r\n"
+        "def second(value):\r\n    return first(value - 1) if value else 0\r\n"
+    )
+    assert analyze_code(SourceFile("sample.py", code), [2]).fragment == code
