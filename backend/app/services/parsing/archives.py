@@ -39,6 +39,11 @@ def read_archive(data: bytes, limits: InputLimits) -> dict[str, bytes]:
             if len(folded) != len(set(folded)):
                 raise InputError("duplicate_path")
             unique_paths([entry.filename for entry in entries if not entry.is_dir()])
+            file_paths = {entry.filename.casefold() for entry in entries if not entry.is_dir()}
+            for path in folded:
+                parts = path.split("/")
+                if any("/".join(parts[:index]) in file_paths for index in range(1, len(parts))):
+                    raise InputError("path_collision")
             result = {}
             for entry in entries:
                 if not entry.is_dir():
