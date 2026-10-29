@@ -182,6 +182,8 @@ def test_zip_bomb_and_file_directory_collision():
         read_archive(archive([("large.py", "a" * 100_000)]), InputLimits())
     with pytest.raises(InputError, match="path_collision"):
         read_archive(archive([("a.py", "pass"), ("a.py/b.py", "pass")]), InputLimits())
+    with pytest.raises(InputError, match="path_collision"):
+        read_archive(archive([("a.py", "pass"), ("A.py/empty/", "")]), InputLimits())
 
 
 def test_code_archive_is_not_extracted_or_imported(tmp_path):
