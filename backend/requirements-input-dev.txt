@@ -1,0 +1,4 @@
+-r requirements-input.txt
+pytest==9.1.1
+coverage==7.16.2
+ruff==0.16.10
