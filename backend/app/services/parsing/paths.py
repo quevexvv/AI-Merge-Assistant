@@ -13,9 +13,9 @@ def safe_path(path: str) -> tuple[str, ...]:
     if (
         len(path) > 1024
         or unicodedata.normalize("NFC", path) != path
+        or any(unicodedata.category(char).startswith("C") for char in path)
         or any(len(part.encode("utf-8")) > 255 for part in parts)
         or any(char in path for char in '<>"|?*')
-        or any(unicodedata.category(char).startswith("C") for char in path)
         or any(part.casefold() == ".git" for part in parts)
     ):
         raise InputError("invalid_path")
