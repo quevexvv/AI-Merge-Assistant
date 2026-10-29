@@ -175,8 +175,25 @@ class _Inspector:
             targets = node.targets if isinstance(node, (ast.Assign, ast.Delete)) else [node.target]
             if any(isinstance(target, (ast.Attribute, ast.Subscript)) for target in targets):
                 self.report("external_mutation", node)
-        if isinstance(node, ast.Assert) and _literal(node.test):
+        if isinstance(node, ast.Assert) and not any(
+            isinstance(item, (ast.Name, ast.Call, ast.Attribute, ast.Subscript))
+            for item in ast.walk(node.test)
+        ):
             self.report("constant_assertion", node)
+        if isinstance(node, ast.ExceptHandler) and (
+            node.type is None
+            or any(
+                _name(item, self.aliases) in {"AssertionError", "Exception", "BaseException"}
+                for item in ast.walk(node.type)
+            )
+        ):
+            self.report("assertion_suppression", node)
+        if isinstance(node, (ast.Try, ast.TryStar)) and any(
+            isinstance(item, (ast.Return, ast.Break, ast.Continue))
+            for statement in node.finalbody
+            for item in ast.walk(statement)
+        ):
+            self.report("assertion_suppression", node)
         if isinstance(node, FUNCTION_TYPES):
             self.function(node)
         if isinstance(node, ast.AnnAssign):
