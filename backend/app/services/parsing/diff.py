@@ -1,10 +1,11 @@
+import io
 import re
 from dataclasses import dataclass
 
 from unidiff import PatchSet
 from unidiff.errors import UnidiffParseError
 
-from .code import SourceFile
+from .code import SourceFile, utf8_bytes
 from .errors import InputError
 from .limits import DEFAULT_LIMITS, InputLimits
 from .paths import safe_path, unique_paths
@@ -44,7 +45,8 @@ def _validate_envelope(diff: str) -> None:
         "copy from ",
         "copy to ",
     )
-    for line in diff.splitlines():
+    for raw_line in io.StringIO(diff):
+        line = raw_line.removesuffix("\n").removesuffix("\r")
         if line == "\\ No newline at end of file":
             continue
         if remaining_old or remaining_new:
@@ -56,7 +58,9 @@ def _validate_envelope(diff: str) -> None:
             if remaining_old < 0 or remaining_new < 0:
                 raise InputError("invalid_diff")
         elif line.startswith("@@"):
-            match = re.fullmatch(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@.*", line)
+            match = re.fullmatch(
+                r"@@ -(\d{1,10})(?:,(\d{1,10}))? \+(\d{1,10})(?:,(\d{1,10}))? @@.*", line
+            )
             if match is None:
                 raise InputError("invalid_diff")
             remaining_old = int(match[2] or 1)
@@ -70,10 +74,10 @@ def _validate_envelope(diff: str) -> None:
 def parse_diff(
     diff: str, files: tuple[SourceFile, ...], limits: InputLimits = DEFAULT_LIMITS
 ) -> tuple[FileChange, ...]:
-    if not diff.strip() or len(diff.encode("utf-8")) > limits.total_source_bytes:
+    if not diff.strip() or len(utf8_bytes(diff)) > limits.total_source_bytes:
         raise InputError("diff_size_limit")
     if any(
-        line.startswith(("diff --cc ", "diff --combined ", "@@@")) for line in diff.splitlines()
+        line.startswith(("diff --cc ", "diff --combined ", "@@@")) for line in io.StringIO(diff)
     ):
         raise InputError("unsupported_diff")
     _validate_envelope(diff)
@@ -83,7 +87,10 @@ def parse_diff(
         raise InputError("invalid_diff") from None
     if not patch or len(patch) > limits.source_files:
         raise InputError("invalid_diff")
-    contents = {file.path: file.content.splitlines() for file in files}
+    contents = {
+        file.path: [line.rstrip("\r\n") for line in io.StringIO(file.content, newline="")]
+        for file in files
+    }
     changes: list[FileChange] = []
     for item in patch:
         old_path = _patch_path(item.source_file)
@@ -96,11 +103,12 @@ def parse_diff(
         if new_path is None and path in contents:
             raise InputError("diff_snapshot_mismatch")
         added: list[int] = []
-        previous_end = 0
+        previous_end = previous_old_end = 0
         for hunk in item:
-            if hunk.target_start < previous_end:
+            if hunk.target_start < previous_end or hunk.source_start < previous_old_end:
                 raise InputError("overlapping_diff_hunks")
             previous_end = hunk.target_start + hunk.target_length
+            previous_old_end = hunk.source_start + hunk.source_length
             for line in hunk:
                 if line.is_added:
                     added.append(line.target_line_no)
