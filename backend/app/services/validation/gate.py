@@ -4,6 +4,7 @@ from app.services.llm.bundles import TestBundle, TestBundleDraft
 from app.services.llm.contracts import GenerationContext
 from app.services.llm.feedback import ValidationFeedback, ValidationIssue
 from app.services.llm.scenarios import ScenarioSet
+from app.services.parsing.code import utf8_bytes
 from app.services.parsing.errors import InputError
 from app.services.parsing.limits import DEFAULT_LIMITS, InputLimits
 from app.services.parsing.paths import safe_path, unique_paths
@@ -50,8 +51,7 @@ class QualityGate:
         if (
             len(bundle.files) > self._policy.max_files
             or len(scenarios.scenarios) > self._policy.max_scenarios
-            or sum(len(file.content.encode("utf-8")) for file in bundle.files)
-            > self._policy.max_bytes
+            or sum(len(utf8_bytes(file.content)) for file in bundle.files) > self._policy.max_bytes
             or len(scenarios.model_dump_json().encode("utf-8")) > self._policy.max_bytes
         ):
             raise InputError("artifact_size_limit")
