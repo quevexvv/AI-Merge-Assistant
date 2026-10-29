@@ -9,7 +9,7 @@ from app.services.llm.contracts import (
     UploadSnapshot,
 )
 
-from .code import CodeAnalysis, SourceFile, analyze_code, snapshot_hash, validate_files
+from .code import CodeAnalysis, SourceFile, analyze_code, snapshot_hash, utf8_bytes, validate_files
 from .diff import FileChange, parse_diff
 from .documents import DocumentText
 from .errors import InputError
@@ -51,7 +51,7 @@ class ContextBuilder:
         generated_tests_dir: str = "generated_tests",
         protected_paths: tuple[str, ...] = (),
     ) -> PreparedInput:
-        validate_files(files, self._limits)
+        validate_files(files, self._limits, allow_empty=github is not None)
         root = safe_path(generated_tests_dir)
         protected = tuple(sorted(set((*protected_paths, *(file.path for file in files)))))
         for path in protected:
@@ -69,6 +69,7 @@ class ContextBuilder:
         for document in sorted(documents, key=lambda item: item.path):
             if not document.text.strip() or len(document.text) > self._limits.text_characters:
                 raise InputError("document_text_limit")
+            utf8_bytes(document.text)
             sources.append(
                 PreparedSource(
                     source_id=f"requirements:{document.path}",
@@ -80,6 +81,7 @@ class ContextBuilder:
         if description is not None:
             if not description.strip() or len(description) > self._limits.text_characters:
                 raise InputError("description_limit")
+            utf8_bytes(description)
             sources.append(
                 PreparedSource(source_id="description", kind="description", text=description)
             )
@@ -107,7 +109,7 @@ class ContextBuilder:
                     )
                 )
         if (
-            sum(len(source.text.encode("utf-8")) for source in sources)
+            sum(len(utf8_bytes(source.text)) for source in sources)
             > self._limits.total_source_bytes
         ):
             raise InputError("context_size_limit")
