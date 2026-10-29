@@ -192,3 +192,47 @@ def test_no_code_execution_during_validation(context, scenarios, bundle_factory,
     result = QualityGate().validate(context, scenarios, bundle_factory(content))
     assert not result.passed
     assert not sentinel.exists()
+
+
+@pytest.mark.parametrize(
+    "body,expected",
+    [
+        ("assert 1 == 1", "constant_assertion"),
+        ("assert 2 * 3 == 6", "constant_assertion"),
+        (
+            "try:\n        assert double(2) == 5\n    except AssertionError:\n        pass",
+            "assertion_suppression",
+        ),
+        (
+            "try:\n        assert double(2) == 5\n"
+            "    except (ValueError, Exception):\n        pass",
+            "assertion_suppression",
+        ),
+        (
+            "try:\n        assert double(2) == 5\n    except:\n        pass",
+            "assertion_suppression",
+        ),
+        (
+            "try:\n        assert double(2) == 5\n    finally:\n        return",
+            "assertion_suppression",
+        ),
+    ],
+)
+def test_false_positive_test_results_are_rejected(
+    context, scenarios, bundle_factory, body, expected
+):
+    code = f"from calculator import double\ndef test_double():\n    {body}\n"
+    result = QualityGate().validate(context, scenarios, bundle_factory(code))
+    assert expected in {issue.message for issue in result.issues}
+
+
+def test_specific_exception_handler_keeps_assertion_failures_visible(
+    context, scenarios, bundle_factory
+):
+    code = (
+        "from calculator import double\ndef test_double():\n"
+        "    try:\n        result = double(2)\n"
+        "    except ValueError:\n        result = 0\n"
+        "    assert result == 4\n"
+    )
+    assert QualityGate().validate(context, scenarios, bundle_factory(code)).passed
