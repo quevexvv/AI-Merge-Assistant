@@ -1,0 +1,5 @@
+pydantic==2.14.0
+pypdf==6.10.0
+defusedxml==0.7.1
+gherkin-official==42.0.1
+unidiff==0.7.5
