@@ -1,0 +1,161 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import '@fontsource-variable/golos-text';
+@import '@fontsource-variable/jetbrains-mono';
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Токены. Светлая тема: холодная «бумага» и тёмно-синие чернила, акцент — глубокий циан.
+ * Статусы (success / warning / danger / info) имеют пару «сильный цвет + мягкий фон»,
+ * чтобы значок состояния читался и без опоры только на цвет (рядом всегда есть текст).
+ */
+:root {
+  --background: #f3f6f8;
+  --foreground: #14222c;
+  --card: #ffffff;
+  --card-foreground: #14222c;
+  --popover: #ffffff;
+  --popover-foreground: #14222c;
+  --primary: #0b6b8a;
+  --primary-foreground: #ffffff;
+  --secondary: #e6edf1;
+  --secondary-foreground: #14222c;
+  --muted: #e9eff2;
+  --muted-foreground: #4f6370;
+  --accent: #dcebf1;
+  --accent-foreground: #0a4f67;
+  --destructive: #b3261e;
+  --border: #d3dde3;
+  --input: #bfccd4;
+  --ring: #0b6b8a;
+
+  --success: #1d7a4c;
+  --success-soft: #e1f3e9;
+  --warning: #8a5300;
+  --warning-soft: #fbefd6;
+  --danger: #b3261e;
+  --danger-soft: #fbe5e3;
+  --info: #0b6b8a;
+  --info-soft: #dcebf1;
+
+  --code-bg: #eef3f6;
+  /* Палитра графика проверена scripts/validate_palette.js (dataviz) для светлой и тёмной темы. */
+  --viz-covered: #2a78d6;
+  --viz-missing: #eb6834;
+  --radius: 0.5rem;
+}
+
+.dark {
+  --background: #0e1519;
+  --foreground: #e4ecf0;
+  --card: #152027;
+  --card-foreground: #e4ecf0;
+  --popover: #152027;
+  --popover-foreground: #e4ecf0;
+  --primary: #5bc3e0;
+  --primary-foreground: #06222b;
+  --secondary: #1d2b33;
+  --secondary-foreground: #e4ecf0;
+  --muted: #1a262d;
+  --muted-foreground: #9bb0bc;
+  --accent: #1b3340;
+  --accent-foreground: #bfe8f4;
+  --destructive: #ff8f86;
+  --border: #27373f;
+  --input: #34474f;
+  --ring: #5bc3e0;
+
+  --success: #5fd08e;
+  --success-soft: #12301f;
+  --warning: #f2b450;
+  --warning-soft: #33260d;
+  --danger: #ff8f86;
+  --danger-soft: #3a1715;
+  --info: #5bc3e0;
+  --info-soft: #12303b;
+
+  --code-bg: #0b1115;
+  --viz-covered: #3987e5;
+  --viz-missing: #d95926;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-code: var(--code-bg);
+  --color-viz-covered: var(--viz-covered);
+  --color-viz-missing: var(--viz-missing);
+
+  --font-sans: 'Golos Text Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --radius-sm: calc(var(--radius) - 3px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+    font-feature-settings:
+      'ss01' 0,
+      'tnum' 0;
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-ring;
+  }
+  /* Числа в таблицах и счётчиках выравниваются по разрядам. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Подсветка Shiki: цвета токенов приходят из CSS-переменных обеих тем. */
+.shiki-token {
+  color: var(--shiki-light);
+}
+.dark .shiki-token {
+  color: var(--shiki-dark);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

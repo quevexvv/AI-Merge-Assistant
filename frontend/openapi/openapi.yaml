@@ -1,0 +1,596 @@
+openapi: 3.1.0
+info:
+  title: AI-Merge-Assistant API (черновик контракта для frontend)
+  version: 0.1.0-draft
+  description: |
+    ЧЕРНОВИК, ASSUMPTION T1 (docs/team-guide.md, раздел 4). В репозитории ещё нет OpenAPI backend,
+    поэтому этот файл — предположение frontend о контракте, на котором строятся типы и MSW-моки.
+    Источник истины — OpenAPI backend (Артём З). Когда он появится: `npm run api:gen:backend`,
+    затем поправить расхождения в `src/api/` и `src/mocks/`. Имена маршрутов и полей — не договорённость.
+
+    Правила, которые контракт закрепляет для интерфейса:
+    - процент покрытия считает только сервер; frontend его не вычисляет и не передаёт;
+    - состояние выполнения (`state`), актуальность (`freshness`), вердикт (`verdict`) и статус мержа
+      (`mergeStatus`) — четыре независимых поля;
+    - кнопка мержа определяется только `mergeDecision.manual.allowed`;
+    - небезопасные методы требуют заголовок `X-CSRF-Token` (значение `Session.csrfToken`; клиент добавляет его
+      сам, в параметрах операций он не описан) и `Idempotency-Key`.
+servers:
+  - url: /api/v1
+security:
+  - sessionCookie: []
+tags:
+  - name: session
+  - name: repositories
+  - name: runs
+
+paths:
+  /auth/github/login:
+    get:
+      tags: [session]
+      operationId: startGithubLogin
+      summary: Начало входа через GitHub (редирект с одноразовым state). Браузер переходит по ссылке, fetch не используется.
+      security: []
+      parameters:
+        - name: returnTo
+          in: query
+          description: Относительный путь внутри приложения, куда вернуть пользователя после входа.
+          schema: { type: string }
+      responses:
+        '302':
+          description: Редирект на GitHub
+          headers:
+            Location: { schema: { type: string } }
+
+  /session:
+    get:
+      tags: [session]
+      operationId: getSession
+      summary: Текущая сессия пользователя
+      responses:
+        '200':
+          description: Пользователь вошёл
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+        '401': { $ref: '#/components/responses/Error' }
+
+  /repositories:
+    get:
+      tags: [repositories]
+      operationId: listRepositories
+      summary: Публичные поддерживаемые репозитории, доступные пользователю
+      responses:
+        '200':
+          description: Список
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Repository' }
+        '401': { $ref: '#/components/responses/Error' }
+
+  /repositories/{repositoryId}/branches:
+    get:
+      tags: [repositories]
+      operationId: listBranches
+      summary: Ветки репозитория
+      parameters:
+        - { name: repositoryId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Список веток
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Branch' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /runs:
+    get:
+      tags: [runs]
+      operationId: listRuns
+      summary: Прогоны текущего пользователя (чужие не возвращаются)
+      parameters:
+        - {
+            name: limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 100, default: 20 },
+          }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Страница прогонов, новые сверху
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunList' }
+        '401': { $ref: '#/components/responses/Error' }
+    post:
+      tags: [runs]
+      operationId: createRun
+      summary: Создать прогон. Ответ 202 после надёжной регистрации задания, без ожидания LLM/runner.
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateRunRequest' }
+      responses:
+        '202':
+          description: Прогон зарегистрирован
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Run' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+
+  /runs/{runId}:
+    get:
+      tags: [runs]
+      operationId: getRun
+      summary: Статус прогона (для polling)
+      parameters:
+        - { $ref: '#/components/parameters/RunId' }
+      responses:
+        '200':
+          description: Статус
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Run' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /runs/{runId}/results:
+    get:
+      tags: [runs]
+      operationId: getRunResults
+      summary: Сценарии, тесты, результаты выполнения, покрытие и решение о мерже
+      parameters:
+        - { $ref: '#/components/parameters/RunId' }
+      responses:
+        '200':
+          description: Результаты (могут быть частичными, если прогон завершился ошибкой)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunResults' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404':
+          description: Нет такого прогона либо результатов ещё нет (`results_not_ready`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /runs/{runId}/merge:
+    post:
+      tags: [runs]
+      operationId: requestMerge
+      summary: Намерение пользователя выполнить мерж. Решает сервер; процент не передаётся.
+      parameters:
+        - { $ref: '#/components/parameters/RunId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MergeRequest' }
+      responses:
+        '202':
+          description: Мерж принят в работу; итог виден в `mergeStatus`
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Run' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409':
+          description: Результат устарел (`stale_snapshot`) или мерж не разрешён (`merge_not_allowed`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: session
+
+  parameters:
+    RunId:
+      name: runId
+      in: path
+      required: true
+      schema: { type: string }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Один ключ на одно намерение пользователя; повтор с тем же ключом не создаёт дубликат.
+      schema: { type: string, minLength: 8, maxLength: 128 }
+
+  responses:
+    Error:
+      description: Безопасная ошибка без утечки данных чужих пользователей
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: >
+                Известные коды (клиент обязан терпеть неизвестные): unauthorized, forbidden, not_found,
+                validation_error, quota_exceeded, rate_limited, stale_snapshot, merge_not_allowed,
+                results_not_ready, internal_error.
+            message: { type: string, description: Безопасный текст для пользователя }
+            fields:
+              type: array
+              items:
+                type: object
+                required: [field, message]
+                properties:
+                  field: { type: string }
+                  message: { type: string }
+            retryAfterSeconds: { type: integer, minimum: 0 }
+
+    User:
+      type: object
+      required: [id, login]
+      properties:
+        id: { type: string }
+        login: { type: string }
+        name: { type: [string, 'null'] }
+        avatarUrl: { type: [string, 'null'], format: uri }
+
+    Quota:
+      type: object
+      required: [runsLimit, runsRemaining, resetsAt]
+      properties:
+        runsLimit: { type: integer, minimum: 0 }
+        runsRemaining: { type: integer, minimum: 0 }
+        resetsAt: { type: string, format: date-time }
+
+    Session:
+      type: object
+      required: [user, csrfToken, quota]
+      properties:
+        user: { $ref: '#/components/schemas/User' }
+        csrfToken: { type: string }
+        quota: { $ref: '#/components/schemas/Quota' }
+
+    Repository:
+      type: object
+      required: [id, fullName, defaultBranch, appInstalled, permissions]
+      properties:
+        id: { type: string }
+        fullName: { type: string, examples: ['demo/calc-service'] }
+        defaultBranch: { type: string }
+        appInstalled:
+          { type: boolean, description: Установлено ли GitHub App (отдельно от входа пользователя) }
+        permissions:
+          type: object
+          required: [analyze, write]
+          properties:
+            analyze: { type: boolean }
+            write: { type: boolean }
+
+    Branch:
+      type: object
+      required: [name, sha]
+      properties:
+        name: { type: string }
+        sha: { type: string }
+
+    RunMode:
+      type: string
+      enum: [default, lazy]
+      description: default требует описание изменений; lazy выводит ожидания из diff.
+
+    RunState:
+      type: string
+      enum:
+        - queued
+        - preparing
+        - generating
+        - validating
+        - running
+        - checking_coverage
+        - improving
+        - completed
+        - failed
+        - cancelled
+
+    Freshness:
+      type: string
+      enum: [current, stale]
+
+    Verdict:
+      type: string
+      enum: [passed, failed, not_applicable]
+      description: >
+        Итог проверки кандидата по правилам допуска (тесты и порог покрытия), решает сервер.
+        Не совпадает ни с состоянием выполнения, ни с актуальностью, ни со статусом мержа.
+
+    MergeStatus:
+      type: string
+      enum: [not_requested, pending, merged, conflict, failed, unknown]
+
+    FailureCategory:
+      type: string
+      enum: [model, environment, tests, quota, permissions, stale_snapshot, internal]
+
+    RunFailure:
+      type: object
+      required: [category, code, message]
+      properties:
+        category: { $ref: '#/components/schemas/FailureCategory' }
+        code: { type: string }
+        message: { type: string, description: Безопасный текст }
+        failedDuring: { $ref: '#/components/schemas/RunState' }
+
+    RepositoryRef:
+      type: object
+      required: [id, fullName]
+      properties:
+        id: { type: string }
+        fullName: { type: string }
+
+    CreateRunRequest:
+      type: object
+      required: [repositoryId, sourceBranch, targetBranch, mode]
+      properties:
+        repositoryId: { type: string }
+        sourceBranch: { type: string }
+        targetBranch: { type: string }
+        mode: { $ref: '#/components/schemas/RunMode' }
+        description:
+          type: [string, 'null']
+          description: Обязательно при mode=default; при mode=lazy игнорируется.
+
+    Run:
+      type: object
+      required:
+        - id
+        - repository
+        - sourceBranch
+        - targetBranch
+        - sourceSha
+        - targetSha
+        - mode
+        - state
+        - attempt
+        - freshness
+        - verdict
+        - mergeStatus
+        - createdAt
+        - updatedAt
+      properties:
+        id: { type: string }
+        repository: { $ref: '#/components/schemas/RepositoryRef' }
+        sourceBranch: { type: string }
+        targetBranch: { type: string }
+        sourceSha: { type: string, description: Зафиксированный SHA исходной ветки }
+        targetSha: { type: string, description: Зафиксированный SHA целевой ветки }
+        mode: { $ref: '#/components/schemas/RunMode' }
+        description: { type: [string, 'null'] }
+        state: { $ref: '#/components/schemas/RunState' }
+        attempt:
+          type: object
+          required: [current, max]
+          properties:
+            current: { type: integer, minimum: 1 }
+            max: { type: integer, minimum: 1 }
+        freshness: { $ref: '#/components/schemas/Freshness' }
+        verdict:
+          description: null, пока вердикта нет
+          oneOf:
+            - { $ref: '#/components/schemas/Verdict' }
+            - { type: 'null' }
+        mergeStatus: { $ref: '#/components/schemas/MergeStatus' }
+        failure:
+          oneOf:
+            - { $ref: '#/components/schemas/RunFailure' }
+            - { type: 'null' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    RunList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Run' }
+        nextCursor: { type: [string, 'null'] }
+
+    ScenarioOrigin:
+      type: string
+      enum: [requirements, inferred]
+      description: requirements — из явного описания/требований; inferred — выведено из diff.
+
+    Scenario:
+      type: object
+      required: [id, title, gherkin, origin, sourceRefs]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        gherkin: { type: string }
+        origin: { $ref: '#/components/schemas/ScenarioOrigin' }
+        sourceRefs: { type: array, items: { type: string } }
+
+    TestFile:
+      type: object
+      required: [path, content, sha256, scenarioIds]
+      properties:
+        path: { type: string }
+        content: { type: string }
+        sha256: { type: string }
+        scenarioIds: { type: array, items: { type: string } }
+
+    TestOutcome:
+      type: string
+      enum: [passed, failed, error, skipped]
+
+    TestResult:
+      type: object
+      required: [nodeId, outcome]
+      properties:
+        nodeId: { type: string }
+        outcome: { $ref: '#/components/schemas/TestOutcome' }
+        durationMs: { type: [integer, 'null'] }
+        message: { type: [string, 'null'], description: Текст ошибки; выводится только как текст }
+
+    Execution:
+      type: object
+      required: [status, exitCode, counts, tests, logs]
+      properties:
+        status:
+          type: string
+          enum: [passed, failed, collect_error, environment_error, timeout]
+        exitCode: { type: [integer, 'null'] }
+        imageDigest: { type: [string, 'null'] }
+        counts:
+          type: object
+          required: [total, passed, failed, errors, skipped]
+          properties:
+            total: { type: integer, minimum: 0 }
+            passed: { type: integer, minimum: 0 }
+            failed: { type: integer, minimum: 0 }
+            errors: { type: integer, minimum: 0 }
+            skipped: { type: integer, minimum: 0 }
+        tests:
+          type: array
+          items: { $ref: '#/components/schemas/TestResult' }
+        logs:
+          type: object
+          required: [text, truncated]
+          properties:
+            text: { type: string }
+            truncated: { type: boolean }
+
+    CoverageFile:
+      type: object
+      required: [path, status, percent, covered, executable, missing, missingLines]
+      properties:
+        path: { type: string }
+        status:
+          type: string
+          enum: [measured, not_applicable, missing_report]
+          description: missing_report — изменённый файл не попал в отчёт; это блокирующее состояние, не 0% и не N/A.
+        percent: { type: [number, 'null'], description: Посчитано сервером }
+        covered: { type: integer, minimum: 0 }
+        executable: { type: integer, minimum: 0 }
+        missing: { type: integer, minimum: 0 }
+        missingLines: { type: array, items: { type: integer, minimum: 1 } }
+
+    Coverage:
+      type: object
+      required:
+        [
+          status,
+          percent,
+          coveredChangedLines,
+          executableChangedLines,
+          missingChangedLines,
+          thresholdPercent,
+          meetsThreshold,
+          files,
+        ]
+      properties:
+        status:
+          type: string
+          enum: [measured, not_applicable, unavailable]
+          description: not_applicable — нет измеряемых строк; unavailable — отчёт отсутствует или повреждён.
+        percent:
+          type: [number, 'null']
+          description: Посчитано сервером по исходным счётчикам. null при not_applicable/unavailable.
+        coveredChangedLines: { type: [integer, 'null'] }
+        executableChangedLines: { type: [integer, 'null'] }
+        missingChangedLines: { type: [integer, 'null'] }
+        thresholdPercent: { type: number }
+        meetsThreshold:
+          { type: [boolean, 'null'], description: Решение сервера по исходным счётчикам }
+        files:
+          type: array
+          items: { $ref: '#/components/schemas/CoverageFile' }
+
+    DecisionReason:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+
+    MergeDecision:
+      type: object
+      description: Создаётся только сервером. Интерфейс его не вычисляет и не подменяет.
+      required: [id, manual, auto, pullRequest]
+      properties:
+        id: { type: string }
+        manual:
+          type: object
+          required: [allowed, reasons]
+          properties:
+            allowed: { type: boolean }
+            reasons: { type: array, items: { $ref: '#/components/schemas/DecisionReason' } }
+        auto:
+          type: object
+          required: [available, enabled, reasons]
+          properties:
+            available: { type: boolean }
+            enabled: { type: boolean }
+            reasons: { type: array, items: { $ref: '#/components/schemas/DecisionReason' } }
+        pullRequest:
+          oneOf:
+            - type: object
+              required: [number, url]
+              properties:
+                number: { type: integer }
+                url: { type: string, format: uri }
+            - { type: 'null' }
+
+    RunResults:
+      type: object
+      required: [runId, attemptId, scenarios, tests, execution, coverage, mergeDecision]
+      properties:
+        runId: { type: string }
+        attemptId: { type: string }
+        scenarios: { type: array, items: { $ref: '#/components/schemas/Scenario' } }
+        tests: { type: array, items: { $ref: '#/components/schemas/TestFile' } }
+        execution:
+          oneOf:
+            - { $ref: '#/components/schemas/Execution' }
+            - { type: 'null' }
+        coverage:
+          oneOf:
+            - { $ref: '#/components/schemas/Coverage' }
+            - { type: 'null' }
+        mergeDecision: { $ref: '#/components/schemas/MergeDecision' }
+
+    MergeRequest:
+      type: object
+      required: [decisionId, mode]
+      properties:
+        decisionId: { type: string, description: ID решения, которое пользователь видел на экране }
+        mode: { type: string, enum: [manual] }
