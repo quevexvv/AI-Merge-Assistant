@@ -40,7 +40,7 @@ from app.db.models import (
 from app.db.models import (
     Session as DbSession,
 )
-from app.db.session import SessionLocal
+from app.db.session import SessionLocal, engine
 from app.main import app
 from app.schemas import GitHubOperationStatus
 
@@ -70,6 +70,7 @@ class FakeTestOAuthPort(GitHubOAuthPort):
 
 @pytest.fixture(autouse=True)
 def clean_environment():
+    Base.metadata.create_all(bind=engine)
     settings.offline_demo_mode = False
     oauth_states_registry.clear()
     github_port.repo_state.clear()

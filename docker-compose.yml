@@ -21,6 +21,19 @@ services:
       timeout: 3s
       retries: 12
 
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: sh -c "python -m alembic upgrade head && python -m alembic check"
+    environment:
+      - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/ai_merge_db
+      - PYTHONPATH=/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   backend:
       build:
         context: ./backend
@@ -37,6 +50,8 @@ services:
         - OFFLINE_DEMO_MODE=false
         - PYTHONPATH=/app
       depends_on:
+        migrate:
+          condition: service_completed_successfully
         postgres:
           condition: service_healthy
         redis:

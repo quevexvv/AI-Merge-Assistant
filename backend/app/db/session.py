@@ -8,8 +8,6 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.config import settings
-from app.db import models  # noqa: F401
-from app.db.base import Base
 
 if settings.database_url.startswith("sqlite"):
     engine = create_engine(
@@ -20,7 +18,6 @@ if settings.database_url.startswith("sqlite"):
 else:
     engine = create_engine(settings.database_url, pool_pre_ping=True)
 
-Base.metadata.create_all(bind=engine)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
 

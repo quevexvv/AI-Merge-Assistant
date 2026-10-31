@@ -9,9 +9,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Копируем и устанавливаем зависимости
-COPY requirements.txt .
+COPY requirements.txt requirements-input.txt requirements-llm.txt ./
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir -r requirements.txt -r requirements-input.txt -r requirements-llm.txt
 
 # Копируем код приложения
 COPY app/ ./app/
@@ -20,7 +20,6 @@ COPY alembic/ ./alembic/
 
 # Устанавливаем переменные окружения по умолчанию
 ENV PYTHONUNBUFFERED=1
-ENV DATABASE_URL=postgresql+psycopg://postgres:postgres@postgres:5432/ai_merge_db
 ENV REDIS_URL=redis://redis:6379/0
 ENV OFFLINE_DEMO_MODE=false
 
