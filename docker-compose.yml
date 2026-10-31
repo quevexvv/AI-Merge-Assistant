@@ -43,12 +43,15 @@ services:
       # volumes:
       #   - ./backend:/app
       ports:
-        - "8001:8000"
+        - "127.0.0.1:8001:8000"
       environment:
         - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/ai_merge_db
         - REDIS_URL=redis://redis:6379/0
         - OFFLINE_DEMO_MODE=false
         - PYTHONPATH=/app
+        - TOKEN_ENCRYPTION_KEY=${TOKEN_ENCRYPTION_KEY:?Set TOKEN_ENCRYPTION_KEY}
+        - SESSION_SECRET_KEY=${SESSION_SECRET_KEY:?Set SESSION_SECRET_KEY}
+        - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET:?Set GITHUB_WEBHOOK_SECRET}
       depends_on:
         migrate:
           condition: service_completed_successfully
