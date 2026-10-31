@@ -392,6 +392,14 @@ def get_oauth_port() -> GitHubOAuthPort:
 
 
 def get_github_port() -> GitHubIntegrationPort:
+    if not settings.offline_demo_mode:
+        raise APIErrorException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            error_code="github_unavailable",
+            message="GitHub integration is not configured.",
+            category=ErrorCategory.ENVIRONMENT,
+            safe_reason="GitHub integration is unavailable.",
+        )
     return github_port
 
 

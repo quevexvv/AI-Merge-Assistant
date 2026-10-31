@@ -95,21 +95,16 @@ def process_webhook_delivery_task(
         if event_type in ("push", "pull_request"):
             repo_data = payload.get("repository") or {}
             full_name = repo_data.get("full_name")
-            new_sha = payload.get("after") or (payload.get("pull_request") or {}).get(
-                "head", {}
-            ).get("sha")
-            repo = None
-            if full_name:
-                repo = db.scalar(select(Repository).where(Repository.full_name == full_name))
-            runs_stmt = select(Run).where(Run.freshness == "current")
-            if repo is not None:
-                runs_stmt = runs_stmt.where(Run.repo_id == repo.id)
+            runs_stmt = select(Run).where(
+                Run.freshness == "current",
+                Run.repo_id.in_(select(Repository.id).where(Repository.full_name == full_name)),
+            )
             for run in db.scalars(runs_stmt).all():
-                if new_sha and new_sha not in (run.source_sha, run.target_sha):
-                    run.freshness = "stale"
-                    if run.merge_status in ("pending", "allowed"):
-                        run.merge_status = "conflict"
-                    run.updated_at = _utcnow()
+                # Branch refs are not persisted yet; a repository event may affect any run.
+                run.freshness = "stale"
+                if run.merge_status in ("pending", "allowed"):
+                    run.merge_status = "conflict"
+                run.updated_at = _utcnow()
 
         elif event_type in ("installation", "installation_repositories"):
             action = payload.get("action")

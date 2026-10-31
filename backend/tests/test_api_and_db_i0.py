@@ -11,9 +11,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy import delete
 
 from app.api.router import (
+    APIErrorException,
     GitHubOAuthPort,
     OAuthUserIdentity,
     SqlAlchemyGitHubActionRepository,
+    get_github_port,
     get_oauth_port,
     github_port,
     oauth_states_registry,
@@ -98,6 +100,7 @@ def clean_environment():
         db.commit()
 
     app.dependency_overrides.clear()
+    app.dependency_overrides[get_github_port] = lambda: github_port
     yield
     app.dependency_overrides.clear()
 
@@ -140,6 +143,14 @@ def test_token_encryption_roundtrip():
     enc = encrypt_token(raw)
     assert raw not in enc
     assert decrypt_token(enc) == raw
+
+
+def test_github_port_is_unavailable_without_explicit_demo_or_override():
+    with pytest.raises(APIErrorException) as exc:
+        get_github_port()
+    assert exc.value.status_code == 503
+    assert exc.value.payload["error_code"] == "github_unavailable"
+    assert not github_port.merge_calls
 
 
 def test_no_builtin_demo_tokens_and_oauth_validates_code_and_browser_state():
@@ -285,6 +296,48 @@ def test_merge_executes_via_github_port_and_reconciles_unknown_status():
     assert second.json()["merge_status"] == "completed"
     assert second.json()["reconciled"] is True
     assert len(github_port.merge_calls) == 1  # Повторного вызова merge_pr не было!
+
+
+@pytest.mark.parametrize("repository", [{"full_name": "someone/unknown"}, {}])
+def test_webhook_for_unknown_repository_does_not_invalidate_runs(repository):
+    app.dependency_overrides[get_oauth_port] = FakeTestOAuthPort
+    client = TestClient(app)
+    token = _login_via_oauth(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    run_id = client.post(
+        "/runs",
+        headers=headers,
+        json={
+            "source_type": "github",
+            "repo_owner": "aruchimo",
+            "repo_name": "demo-python-repo",
+            "source_sha": "1111111",
+            "target_sha": "2222222",
+            "mode": "default",
+            "description": "Valid change description",
+        },
+    ).json()["run_id"]
+    body = json.dumps(
+        {"ref": "refs/heads/main", "after": "9999999", "repository": repository}
+    ).encode("utf-8")
+    signature = (
+        "sha256="
+        + hmac.new(settings.github_webhook_secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    )
+    response = client.post(
+        "/webhooks/github",
+        content=body,
+        headers={
+            "X-Hub-Signature-256": signature,
+            "X-GitHub-Delivery": "unknown-repo",
+            "X-GitHub-Event": "push",
+        },
+    )
+    assert response.status_code == 204
+    with SessionLocal() as db:
+        run = db.get(Run, UUID(run_id))
+        assert run.freshness == "current"
+        assert run.merge_status == "pending"
 
 
 def test_webhook_persists_in_db_updates_run_freshness_and_deduplicates():
