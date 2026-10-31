@@ -36,3 +36,11 @@ coverage/
 # OS / editor extras
 *.swp
 *.swo
+
+# Allow application coverage package
+!**/app/core/coverage/
+!**/app/core/coverage/**
+
+# Re-ignore bytecode
+**/__pycache__/
+*.py[cod]
