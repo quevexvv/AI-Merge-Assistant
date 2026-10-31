@@ -403,6 +403,17 @@ def get_github_port() -> GitHubIntegrationPort:
     return github_port
 
 
+async def require_offline_demo() -> None:
+    if not settings.offline_demo_mode:
+        raise APIErrorException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            error_code="feature_unavailable",
+            message="This feature is not configured.",
+            category=ErrorCategory.ENVIRONMENT,
+            safe_reason="This feature is unavailable.",
+        )
+
+
 def get_task_dispatcher() -> TaskDispatcherPort:
     return task_dispatcher
 
@@ -645,7 +656,9 @@ def list_installations(
     }
 
 
-@api_router.post("/installations/{installation_id}/connect")
+@api_router.post(
+    "/installations/{installation_id}/connect", dependencies=[Depends(require_offline_demo)]
+)
 def connect_installation(
     installation_id: str,
     user_id: UUID = Depends(get_current_user_id),
@@ -668,7 +681,7 @@ def connect_installation(
     return {"schema_version": SCHEMA_VERSION, "installation_id": installation_id, "connected": True}
 
 
-@api_router.get("/repos")
+@api_router.get("/repos", dependencies=[Depends(require_offline_demo)])
 def list_repos(
     user_id: UUID = Depends(get_current_user_id),
     db: OrmSession = Depends(get_db),
@@ -883,7 +896,7 @@ def get_run_status(
     }
 
 
-@api_router.get("/runs/{run_id}/scenarios")
+@api_router.get("/runs/{run_id}/scenarios", dependencies=[Depends(require_offline_demo)])
 def get_run_scenarios(
     run_id: UUID,
     user_id: UUID = Depends(get_current_user_id),
@@ -920,7 +933,7 @@ def get_run_scenarios(
     )
 
 
-@api_router.get("/runs/{run_id}/tests")
+@api_router.get("/runs/{run_id}/tests", dependencies=[Depends(require_offline_demo)])
 def get_run_tests(
     run_id: UUID,
     user_id: UUID = Depends(get_current_user_id),
@@ -997,7 +1010,9 @@ class UploadRequest(BaseModel):
     size_bytes: int = Field(default=1024, ge=1)
 
 
-@api_router.post("/uploads", status_code=status.HTTP_202_ACCEPTED)
+@api_router.post(
+    "/uploads", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_offline_demo)]
+)
 def create_upload(
     payload: UploadRequest,
     user_id: UUID = Depends(get_current_user_id),
@@ -1039,7 +1054,7 @@ def create_upload(
     }
 
 
-@api_router.get("/uploads/{upload_id}")
+@api_router.get("/uploads/{upload_id}", dependencies=[Depends(require_offline_demo)])
 def get_upload(
     upload_id: UUID,
     user_id: UUID = Depends(get_current_user_id),
@@ -1065,7 +1080,7 @@ def get_upload(
     }
 
 
-@api_router.get("/runs/{run_id}/export")
+@api_router.get("/runs/{run_id}/export", dependencies=[Depends(require_offline_demo)])
 def export_run_artifacts(
     run_id: UUID,
     format: str = Query("zip"),
