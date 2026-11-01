@@ -139,7 +139,7 @@ class OAuthUserIdentity:
 class GitHubOAuthPort:
     """Порт обмена OAuth code на подтверждённую личность пользователя GitHub."""
 
-    def exchange_code(self, code: str) -> OAuthUserIdentity:
+    async def exchange_code(self, code: str) -> OAuthUserIdentity:
         if not settings.offline_demo_mode:
             raise APIErrorException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -386,21 +386,31 @@ github_port = GitHubIntegrationPort()
 task_dispatcher = TaskDispatcherPort()
 oauth_states_registry: dict[str, OAuthStateEntry] = {}
 
+# Lazy singletons for live GitHub services (only created when needed)
+_live_oauth_port: GitHubOAuthPort | None = None
+_live_github_port: GitHubIntegrationPort | None = None
+
 
 def get_oauth_port() -> GitHubOAuthPort:
-    return oauth_port
+    if settings.offline_demo_mode:
+        return oauth_port
+    global _live_oauth_port
+    if _live_oauth_port is None:
+        from app.services.github.oauth import create_oauth_service
+
+        _live_oauth_port = create_oauth_service()
+    return _live_oauth_port
 
 
 def get_github_port() -> GitHubIntegrationPort:
-    if not settings.offline_demo_mode:
-        raise APIErrorException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            error_code="github_unavailable",
-            message="GitHub integration is not configured.",
-            category=ErrorCategory.ENVIRONMENT,
-            safe_reason="GitHub integration is unavailable.",
-        )
-    return github_port
+    if settings.offline_demo_mode:
+        return github_port
+    global _live_github_port
+    if _live_github_port is None:
+        from app.services.github.integration import create_integration_service
+
+        _live_github_port = create_integration_service()
+    return _live_github_port
 
 
 async def require_offline_demo() -> None:
@@ -510,7 +520,7 @@ def github_login() -> Response:
 
 
 @api_router.get("/auth/github/callback")
-def github_callback(
+async def github_callback(
     response: Response,
     state: str = Query(...),
     code: str = Query(...),
@@ -533,7 +543,18 @@ def github_callback(
             safe_reason="OAuth state is invalid or expired.",
         )
 
-    identity = oauth.exchange_code(code)
+    try:
+        identity = await oauth.exchange_code(code)
+    except Exception as exc:
+        if isinstance(exc, APIErrorException):
+            raise
+        raise APIErrorException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            error_code="oauth_exchange_failed",
+            message="GitHub OAuth code verification failed.",
+            category=ErrorCategory.RIGHTS,
+            safe_reason="Could not verify GitHub authorization code.",
+        ) from exc
 
     user = db.scalar(select(User).where(User.github_id == identity.github_id))
     if user is None:

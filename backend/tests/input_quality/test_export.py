@@ -4,13 +4,14 @@ from io import BytesIO
 from zipfile import ZipFile
 
 import pytest
+from gherkin.parser import Parser
+
 from app.services.export import ExportService
 from app.services.llm.fake import FakeProvider
 from app.services.llm.provider import ProviderResponse
 from app.services.llm.service import LLMService
 from app.services.llm.settings import LLMSettings
 from app.services.parsing import InputError
-from gherkin.parser import Parser
 
 
 def test_zip_is_reproducible_and_has_exact_validated_contents(context, scenarios, bundle_factory):

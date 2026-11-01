@@ -86,9 +86,10 @@ class GenerationContext(Contract):
             raise ValueError("default mode requires description or requirements")
         if self.snapshot.kind == "github" and "diff" not in kinds:
             raise ValueError("GitHub input requires a prepared diff")
-        if self.snapshot.kind == "upload":
-            if self.mode != "default" or "requirements" not in kinds:
-                raise ValueError("upload requires default mode and extracted requirements")
+        if self.snapshot.kind == "upload" and (
+            self.mode != "default" or "requirements" not in kinds
+        ):
+            raise ValueError("upload requires default mode and extracted requirements")
         paths = [file.path for file in self.changed_lines]
         if len(paths) != len(set(paths)):
             raise ValueError("changed file paths must be unique")

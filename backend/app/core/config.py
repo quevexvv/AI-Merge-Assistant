@@ -22,6 +22,15 @@ class Settings(BaseSettings):
     session_secret_key: str = "dev-only-session-secret-key-0000"
     github_webhook_secret: str = "dev-only-webhook-secret"
 
+    # GitHub OAuth settings
+    github_client_id: str | None = None
+    github_client_secret: str | None = None
+    github_redirect_uri: str | None = None
+
+    # GitHub App settings
+    github_app_id: str | None = None
+    github_app_private_key: str | None = None
+
     artifacts_volume_path: str = "/tmp/ai_merge_artifacts"
 
 

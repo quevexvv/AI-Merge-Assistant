@@ -76,7 +76,7 @@ class QualityGate:
                 for source in context.sources
                 if source.path is not None and source.kind in {"code", "existing_test"}
             )
-            protected = tuple(set((*context.protected_paths, *source_paths)))
+            protected = tuple({*context.protected_paths, *source_paths})
             for path in protected:
                 safe_path(path)
             checked_context = context.model_copy(update={"protected_paths": protected})

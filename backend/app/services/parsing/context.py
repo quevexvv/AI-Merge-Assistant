@@ -53,7 +53,7 @@ class ContextBuilder:
     ) -> PreparedInput:
         validate_files(files, self._limits, allow_empty=github is not None)
         root = safe_path(generated_tests_dir)
-        protected = tuple(sorted(set((*protected_paths, *(file.path for file in files)))))
+        protected = tuple(sorted({*protected_paths, *(file.path for file in files)}))
         for path in protected:
             safe_path(path)
         if any(

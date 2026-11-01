@@ -1,4 +1,5 @@
 import pytest
+
 from app.services.llm.bundles import TestBundle as Bundle
 from app.services.llm.bundles import compute_bundle_hash
 from app.services.parsing import InputError

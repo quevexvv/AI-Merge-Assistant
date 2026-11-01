@@ -11,7 +11,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy import delete
 
 from app.api.router import (
-    APIErrorException,
     GitHubOAuthPort,
     OAuthUserIdentity,
     SqlAlchemyGitHubActionRepository,
@@ -48,7 +47,7 @@ from app.schemas import GitHubOperationStatus
 class FakeTestOAuthPort(GitHubOAuthPort):
     """Тестовый OAuth-порт, проверяющий code и возвращающий подтверждённую личность."""
 
-    def exchange_code(self, code: str) -> OAuthUserIdentity:
+    async def exchange_code(self, code: str) -> OAuthUserIdentity:
         if code == "valid-code-user-1":
             return OAuthUserIdentity(
                 github_id="10001",
@@ -65,7 +64,7 @@ class FakeTestOAuthPort(GitHubOAuthPort):
                 access_token="ghu_token_user_2",
                 installations=["inst-2"],
             )
-        return super().exchange_code(code)
+        return await super().exchange_code(code)
 
 
 @pytest.fixture(autouse=True)
@@ -82,6 +81,12 @@ def clean_environment():
     task_dispatcher.dispatched_webhooks.clear()
     SqlAlchemyGitHubActionRepository._key_to_reconciliation.clear()
     SqlAlchemyGitHubActionRepository._contexts.clear()
+
+    # Reset live service singletons so each test starts clean
+    import app.api.router as _router_mod
+
+    _router_mod._live_oauth_port = None
+    _router_mod._live_github_port = None
 
     with SessionLocal() as db:
         for model in (
@@ -147,10 +152,15 @@ def test_token_encryption_roundtrip():
 
 
 def test_github_port_is_unavailable_without_explicit_demo_or_override():
-    with pytest.raises(APIErrorException) as exc:
-        get_github_port()
-    assert exc.value.status_code == 503
-    assert exc.value.payload["error_code"] == "github_unavailable"
+    """When offline_demo_mode=False, get_github_port() returns a live service.
+
+    Verifies that the DI layer returns a live integration service when not
+    in demo mode, and that the demo-mode fake port has no merge calls.
+    """
+    from app.services.github.integration import GitHubIntegrationService
+
+    port = get_github_port()
+    assert isinstance(port, GitHubIntegrationService)
     assert not github_port.merge_calls
 
 

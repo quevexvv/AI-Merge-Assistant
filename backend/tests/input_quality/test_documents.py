@@ -3,6 +3,9 @@ from io import BytesIO
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 import pytest
+from pypdf import PdfWriter
+from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+
 from app.services.parsing import (
     InputError,
     InputLimits,
@@ -10,8 +13,6 @@ from app.services.parsing import (
     read_code_archive,
 )
 from app.services.parsing.archives import read_archive
-from pypdf import PdfWriter
-from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 
 def test_document_worker_has_hard_deadline(monkeypatch):

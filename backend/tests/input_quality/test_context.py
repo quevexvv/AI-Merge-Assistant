@@ -2,6 +2,7 @@ import difflib
 from dataclasses import replace
 
 import pytest
+
 from app.services.parsing import (
     ContextBuilder,
     GitHubInput,

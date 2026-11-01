@@ -1,9 +1,10 @@
 import unicodedata
 
+from gherkin.parser import Parser
+
 from app.services.llm.contracts import GenerationContext
 from app.services.llm.scenarios import ScenarioSet
 from app.services.parsing.errors import InputError
-from gherkin.parser import Parser
 
 
 def _single_line(value: str) -> str:
