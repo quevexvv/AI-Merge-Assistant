@@ -14,3 +14,5 @@ anyio>=4.6.0
 ruff>=0.6.0
 respx>=0.21.0
 PyJWT[cryptography]>=2.8.0
+unidiff>=1.0.1
+gherkin-official>=42.0.0

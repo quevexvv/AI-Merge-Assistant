@@ -440,6 +440,7 @@ VALID_TRANSITIONS: dict[ExecutionState, set[ExecutionState]] = {
     },
     ExecutionState.VALIDATING: {
         ExecutionState.RUNNING,
+        ExecutionState.IMPROVING,
         ExecutionState.FAILED,
         ExecutionState.CANCELLED,
     },
@@ -454,7 +455,12 @@ VALID_TRANSITIONS: dict[ExecutionState, set[ExecutionState]] = {
         ExecutionState.FAILED,
         ExecutionState.CANCELLED,
     },
-    ExecutionState.IMPROVING: {ExecutionState.VALIDATING, ExecutionState.RUNNING},
+    ExecutionState.IMPROVING: {
+        ExecutionState.VALIDATING,
+        ExecutionState.RUNNING,
+        ExecutionState.FAILED,
+        ExecutionState.CANCELLED,
+    },
     ExecutionState.COMPLETED: set(),  # Terminal
     ExecutionState.FAILED: set(),  # Terminal
     ExecutionState.CANCELLED: set(),  # Terminal
