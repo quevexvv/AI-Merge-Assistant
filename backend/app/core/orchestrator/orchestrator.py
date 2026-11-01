@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 from app.schemas import (
@@ -125,6 +126,23 @@ class RunState:
             error_message=_pick("error_message", self.error_message),
             updated_at=datetime.now(UTC),
         )
+
+
+def _matches_id(current_id: UUID | None, candidate_id: Any) -> bool:
+    """Check if current UUID matches candidate (as UUID, str, or uuid5 of str)."""
+    if current_id is None or candidate_id is None:
+        return current_id == candidate_id
+    cand_str = str(candidate_id)
+    if str(current_id) == cand_str:
+        return True
+    try:
+        from uuid import NAMESPACE_DNS, UUID, uuid5
+
+        if isinstance(candidate_id, UUID):
+            return current_id == candidate_id
+        return current_id == uuid5(NAMESPACE_DNS, cand_str)
+    except Exception:
+        return False
 
 
 class RunOrchestrator:
@@ -265,18 +283,25 @@ class RunOrchestrator:
         Начало доработки: checking_coverage -> improving.
         Проверяет соответствие feedback текущему снимку и хешу тестов.
         """
-        if current.execution_state != ExecutionState.CHECKING_COVERAGE:
+        if current.execution_state not in (
+            ExecutionState.CHECKING_COVERAGE,
+            ExecutionState.VALIDATING,
+        ):
             raise InvalidTransitionError(current.execution_state, ExecutionState.IMPROVING)
 
         # Критическая проверка: feedback должен относиться к ТЕКУЩЕМУ снимку и набору тестов
-        if current.snapshot_id != feedback.snapshot_id:
+        fb_snapshot = getattr(feedback, "snapshot_id", None)
+        if not _matches_id(current.snapshot_id, fb_snapshot):
             raise FeedbackMismatchError(
-                f"Feedback snapshot_id {feedback.snapshot_id} != current {current.snapshot_id}"
+                f"Feedback snapshot_id {fb_snapshot} != current {current.snapshot_id}"
             )
-        if current.test_bundle_hash != feedback.test_bundle_hash:
+
+        fb_hash = getattr(feedback, "test_bundle_hash", None) or getattr(
+            feedback, "bundle_hash", None
+        )
+        if current.test_bundle_hash != fb_hash:
             raise FeedbackMismatchError(
-                f"Feedback test_bundle_hash {feedback.test_bundle_hash}"
-                f" != current {current.test_bundle_hash}"
+                f"Feedback test_bundle_hash {fb_hash} != current {current.test_bundle_hash}"
             )
 
         next_iteration = current.improving_iteration + 1
@@ -377,15 +402,20 @@ class RunOrchestrator:
         Raises:
             FeedbackMismatchError: если feedback не соответствует текущему состоянию.
         """
-        if current.snapshot_id != feedback.snapshot_id:
+        fb_snapshot = getattr(feedback, "snapshot_id", None)
+        if not _matches_id(current.snapshot_id, fb_snapshot):
             raise FeedbackMismatchError(
                 f"Feedback snapshot_id mismatch: expected {current.snapshot_id},"
-                f" got {feedback.snapshot_id}"
+                f" got {fb_snapshot}"
             )
-        if current.test_bundle_hash != feedback.test_bundle_hash:
+
+        fb_hash = getattr(feedback, "test_bundle_hash", None) or getattr(
+            feedback, "bundle_hash", None
+        )
+        if current.test_bundle_hash != fb_hash:
             raise FeedbackMismatchError(
                 f"Feedback test_bundle_hash mismatch: expected {current.test_bundle_hash},"
-                f" got {feedback.test_bundle_hash}"
+                f" got {fb_hash}"
             )
         if feedback.iteration != current.improving_iteration + 1:
             raise FeedbackMismatchError(
